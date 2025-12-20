@@ -6,14 +6,14 @@
   <title>FLASH6 - DASHBOARD</title>
 
   <!-- ✅ 이미지 프리로드(LOCKOUT/토스트/아이콘 늦게 뜨는거 방지) -->
-  <link rel="preload" as="image" href="/img/Flash_logo.png">
-  <link rel="preload" as="image" href="/img/Danger.svg">
-  <link rel="preload" as="image" href="/img/Tick.svg">
-  <link rel="preload" as="image" href="/img/Graph.svg">
-  <link rel="preload" as="image" href="/img/Activity.svg">
-  <link rel="preload" as="image" href="/img/RS_1.svg">
-  <link rel="preload" as="image" href="/img/RS_2.svg">
-  <link rel="preload" as="image" href="/img/RS_all.svg">
+  <link rel="preload" as="image" href="img/Flash_logo.png">
+  <link rel="preload" as="image" href="img/Danger.svg">
+  <link rel="preload" as="image" href="img/Tick.svg">
+  <link rel="preload" as="image" href="img/Graph.svg">
+  <link rel="preload" as="image" href="img/Activity.svg">
+  <link rel="preload" as="image" href="img/RS_1.svg">
+  <link rel="preload" as="image" href="img/RS_2.svg">
+  <link rel="preload" as="image" href="img/RS_all.svg">
 
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -748,7 +748,7 @@
 
   <!-- ✅ SPLASH: 로고 먼저 → 2초 뒤 로딩중 → 이미지 프리로드 완료되면 진입 -->
   <div id="splash" aria-label="loading">
-    <img id="splashLogo" src="/img/Flash_logo.png" alt="FLASH">
+    <img id="splashLogo" src="img/Flash_logo.png" alt="FLASH">
     <div id="splashLoading">로딩중<span id="splashDots"></span></div>
   </div>
 
@@ -757,7 +757,7 @@
 
     <header class="top-bar">
       <div class="top-left">
-        <img class="logo-img" src="/img/Flash_logo.png" alt="ALTIS logo">
+        <img class="logo-img" src="img/Flash_logo.png" alt="ALTIS logo">
         <div class="title-block">
           <div class="title-main">FLASH6</div>
           <div class="title-sub">ALTIS DAQ SYSTEM</div>
@@ -1132,7 +1132,7 @@
               <div class="settings-group">
                 <!-- ✅ 여기: "펌웨어" 설정 안에 작은 F 로고 -->
                 <div class="fw-head">
-                  <img class="fw-f-logo" src="/img/Flash_logo.png" alt="F">
+                  <img class="fw-f-logo" src="img/Flash_logo.png" alt="F">
                   <div class="settings-group-title" style="margin:0;">FLASH</div>
                 </div>
 
@@ -1161,7 +1161,7 @@
     <!-- 시퀀스 스타트 롱프레스 모달 -->
     <div id="confirmOverlay" class="confirm-overlay hidden" style="display:none;">
       <div class="confirm-dialog">
-        <div class="confirm-icon"><img src="/img/Danger.svg" alt="warning"></div>
+        <div class="confirm-icon"><img src="img/Danger.svg" alt="warning"></div>
         <div class="confirm-title">점화 시퀀스를 진행할까요?</div>
         <div class="confirm-text">
           점화 조건이 충족되지 않으면 보드가 점화를 실행하지 않습니다.<br>
@@ -1183,7 +1183,7 @@
     <!-- 강제 점화 모달 -->
     <div id="forceOverlay" class="confirm-overlay hidden" style="display:none;">
       <div class="confirm-dialog">
-        <div class="confirm-icon"><img src="/img/Danger.svg" alt="warning"></div>
+        <div class="confirm-icon"><img src="img/Danger.svg" alt="warning"></div>
         <div class="confirm-title">강제 점화를 진행할까요?</div>
         <div class="confirm-text">
           강제 점화는 고위험 동작입니다.<br>
@@ -1446,14 +1446,14 @@
       }, 320);
 
       const ASSETS = [
-        "/img/Flash_logo.png",
-        "/img/Danger.svg",
-        "/img/Tick.svg",
-        "/img/Graph.svg",
-        "/img/Activity.svg",
-        "/img/RS_1.svg",
-        "/img/RS_2.svg",
-        "/img/RS_all.svg",
+        "img/Flash_logo.png",
+        "img/Danger.svg",
+        "img/Tick.svg",
+        "img/Graph.svg",
+        "img/Activity.svg",
+        "img/RS_1.svg",
+        "img/RS_2.svg",
+        "img/RS_all.svg",
       ];
 
       // ✅ 프리로드는 바로 시작
@@ -1560,10 +1560,10 @@
     }
 
     function lockoutImgSrc(mask){
-      if(mask===1) return "/img/RS_1.svg";
-      if(mask===2) return "/img/RS_2.svg";
-      if(mask===3) return "/img/RS_all.svg";
-      return "/img/RS_all.svg";
+      if(mask===1) return "img/RS_1.svg";
+      if(mask===2) return "img/RS_2.svg";
+      if(mask===3) return "img/RS_all.svg";
+      return "img/RS_all.svg";
     }
     function showLockoutModal(){
       if(!el.lockoutOverlay) return;
@@ -1630,11 +1630,11 @@
     }
 
     function getToastIconPath(type){
-      if(type==="success") return "/img/Tick.svg";
-      if(type==="warn") return "/img/Danger.svg";
-      if(type==="error") return "/img/Danger.svg";
-      if(type==="ignite") return "/img/Graph.svg";
-      return "/img/Activity.svg";
+      if(type==="success") return "img/Tick.svg";
+      if(type==="warn") return "img/Danger.svg";
+      if(type==="error") return "img/Danger.svg";
+      if(type==="ignite") return "img/Graph.svg";
+      return "img/Activity.svg";
     }
 
     function dismissToast(toast){
