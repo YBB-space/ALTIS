@@ -176,7 +176,7 @@
     .countdown-sub{font-size:12px;color:var(--text-soft)}
     #countdown{
       font-family:SFMono-Regular,ui-monospace,Menlo,Monaco,Consolas,"Courier New",monospace;
-      font-size:clamp(42px,7vw,58px);font-weight:700;letter-spacing:.09em;color:var(--danger);
+      font-size:clamp(46px,7vw,64px);font-weight:800;letter-spacing:.05em;color:var(--danger);
       text-align:right;min-width:120px
     }
     #countdown span{font-size:14px;margin-left:4px;color:var(--text-soft);letter-spacing:0}
@@ -250,17 +250,26 @@
       padding:6px 10px;height:34px;box-shadow:0 8px 18px rgba(148,163,184,0.35);white-space:nowrap
     }
     .primary-btn{
-      border-radius:var(--radius-pill);border:1px solid rgba(248,113,113,0.9);
-      background:linear-gradient(135deg,#ef4444,#f97316);color:#fef2f2;
+      border-radius:var(--radius-pill);
+      border:1px solid rgba(249,115,22,0.65);
+      background:linear-gradient(120deg,rgba(244,67,54,0.78),rgba(249,115,22,0.78));
+      color:#fff7ed;
       font-size:14px;font-weight:700;letter-spacing:.05em;
-      padding:11px 16px;height:42px;width:100%;
-      box-shadow:0 12px 28px rgba(248,113,113,0.7)
+      padding:10px 18px;height:42px;width:100%;
+      box-shadow:0 10px 26px rgba(249,115,22,0.32),0 6px 14px rgba(239,68,68,0.24);
+      text-shadow:0 1px 2px rgba(0,0,0,0.12);
+      backdrop-filter:blur(10px) saturate(1.15);-webkit-backdrop-filter:blur(10px) saturate(1.15);
     }
     .secondary-btn{
-      border-radius:var(--radius-pill);border:1px solid rgba(15,23,42,0.85);
-      background:linear-gradient(135deg,#020617,#111827);color:#e5e7eb;
-      font-size:12px;font-weight:600;padding:10px 12px;height:42px;width:100%;
-      box-shadow:0 10px 24px rgba(15,23,42,0.9)
+      border-radius:var(--radius-pill);
+      border:1px solid rgba(148,163,184,0.55);
+      background:linear-gradient(135deg,rgba(34, 36, 40, 0.78),rgba(64, 71, 84, 0.78));
+      color:#f8fafc;
+      font-size:12px;font-weight:700;letter-spacing:.04em;
+      padding:10px 16px;height:42px;width:100%;
+      box-shadow:0 8px 20px rgba(107,114,128,0.28);
+      text-shadow:0 1px 2px rgba(0,0,0,0.12);
+      backdrop-filter:blur(10px) saturate(1.05);-webkit-backdrop-filter:blur(10px) saturate(1.05);
     }
     .force-btn,.launcher-open-btn{
       margin-top:6px;width:100%;padding:10px 14px;border-radius:var(--radius-pill);
@@ -268,6 +277,7 @@
       color:#111827;font-size:13px;font-weight:600;box-shadow:0 8px 18px rgba(148,163,184,0.35)
     }
     .force-btn{justify-content:center}
+    .force-btn.disabled{opacity:.45;pointer-events:none;filter:saturate(0.6) grayscale(0.1)}
     .launcher-open-btn{justify-content:space-between}
     .controls-card{padding-top:14px;padding-bottom:14px}
     .controls-subtitle{font-size:11px;color:var(--text-soft);margin-top:2px}
@@ -773,6 +783,10 @@
           <div class="chip-label">Wi-Fi</div>
           <div class="chip-value">192.168.4.1</div>
         </div>
+        <div class="chip">
+          <div class="chip-label">KST</div>
+          <div class="chip-value" id="kst-time">--:--:--</div>
+        </div>
       </div>
     </header>
 
@@ -795,28 +809,28 @@
             <div class="countdown-caption">T-MINUS</div>
             <div class="countdown-sub">Main ignition countdown</div>
 
-            <div class="pill-row">
-              <div class="pill">
-                <strong>Snap</strong>
-                <span id="loop-pill">-- ms</span>
-                <span class="pill-sep">·</span>
-                <span id="snap-hz">-- Hz</span>
-              </div>
-
-              <div class="pill">
-                <strong>HX711</strong>
-                <span id="hx-hz">-- Hz</span>
-                <span class="pill-sep">·</span>
-                <span id="cpu-us">-- us</span>
-              </div>
-
-              <div class="pill"><strong>Mode</strong> <span id="mode-pill">-</span></div>
-              <div class="pill"><strong>Relay</strong> <span id="relay-safe-pill">SAFE</span></div>
+          <div class="pill-row">
+            <div class="pill">
+              <strong>Snap</strong>
+              <span id="loop-pill">-- ms</span>
+              <span class="pill-sep">·</span>
+              <span id="snap-hz">-- Hz</span>
             </div>
-          </div>
 
-          <div id="countdown">--<span>s</span></div>
+            <div class="pill">
+              <strong>HX711</strong>
+              <span id="hx-hz">-- Hz</span>
+              <span class="pill-sep">·</span>
+              <span id="cpu-us">-- us</span>
+            </div>
+
+            <div class="pill"><strong>Mode</strong> <span id="mode-pill">-</span></div>
+            <div class="pill"><strong>Relay</strong> <span id="relay-safe-pill">SAFE</span></div>
+          </div>
         </div>
+
+        <div id="countdown">--<span>s</span></div>
+      </div>
 
         <div class="section-label">Live Telemetry</div>
         <div class="ign-metrics">
@@ -951,7 +965,7 @@
               <div id="launcherOpenBtn" class="control-tile is-btn" role="button" tabindex="0">
                 <div>
                   <div class="control-tile-label">발사대</div>
-                  <div class="control-tile-sub">발사대 제어</div>
+                  <div class="control-tile-sub">발사대 모터/액츄에이터제어</div>
                 </div>
                 <div class="control-tile-actions">
                   <span class="pill pill-gray">OPEN</span>
@@ -1358,6 +1372,7 @@
     let prevSwState = null;
     let prevIcState = null;
     let prevGsState = null;
+    let st2StartMs = null;
 
     // ✅ RelaySafe/LOCKOUT
     let relaySafeEnabled = true;
@@ -1748,8 +1763,13 @@
     }
 
     function updateControlAccessUI(st){
+      const state = (st==null) ? currentSt : st;
       const unlocked=isControlUnlocked();
-      if(el.forceBtn) el.forceBtn.disabled = !unlocked || lockoutLatched;
+      if(el.forceBtn){
+        const blocked = (!unlocked || lockoutLatched || state!==0);
+        el.forceBtn.disabled = blocked;
+        el.forceBtn.classList.toggle("disabled", blocked);
+      }
       if(el.launcherOpenBtn){
         const blocked = (!unlocked || lockoutLatched);
         el.launcherOpenBtn.classList.toggle("disabled", blocked);
@@ -2226,6 +2246,8 @@
       const rm  = Number(data.rm  ?? data.rmask   ?? data.rm ?? 0);
 
       currentSt=st;
+      if(st===2 && st2StartMs===null) st2StartMs=Date.now();
+      if(st!==2) st2StartMs=null;
       latestTelemetry = {sw: sw?1:0, ic: ic?1:0, rly: rly?1:0, mode, gs};
 
       thrustBaseHistory.push(t);
@@ -2388,23 +2410,12 @@
         if(el.igswitch) el.igswitch.checked=!!gs;
 
         if(el.countdown){
-          if(lockoutLatched){
-            el.countdown.innerHTML="LOCK<span></span>";
-          }else if(ab && st===0){
-            el.countdown.innerHTML="ABORTED<span></span>";
-          }else if(st===1 && cd!==null){
+          let cdText="--";
+          if(st===1 && cd!==null){
             let sec=Math.ceil(cd/1000); if(sec<0) sec=0;
-            el.countdown.innerHTML=sec+"<span>s</span>";
-          }else if(uw && st===0 && cd!==null){
-            let sec=Math.ceil(cd/1000);
-            const fallback=uiSettings ? uiSettings.countdownSec : 10;
-            if(!isFinite(sec) || sec<=0) sec=fallback;
-            el.countdown.innerHTML=sec+"<span>s</span>";
-          }else if(st===2){
-            el.countdown.innerHTML="IGN<span></span>";
-          }else if(!ab){
-            el.countdown.innerHTML="--<span>s</span>";
+            cdText=sec;
           }
+          el.countdown.innerHTML=cdText+"<span>s</span>";
         }
 
         const statusCode=setStatusFromState(st,!!ic,!!ab,lockoutLatched);
@@ -2620,7 +2631,6 @@
         if(confirmTitleEl){
           confirmTitleEl.textContent = sec>0 ? ("점화 시퀀스 진입까지 "+sec+"초") : "카운트다운 시작";
         }
-
         if(sec!==lpLastSentSec){
           lpLastSentSec=sec;
           sendCommand({http:"/precount?uw=1&cd="+left, ser:"PRECOUNT 1 "+left}, false);
@@ -2658,6 +2668,10 @@
     function showForceConfirm(){
       if(lockoutLatched){
         showToast("LOCKOUT 상태에서는 강제점화를 포함한 제어가 불가능합니다. 보드를 재시작하세요.", "error");
+        return;
+      }
+      if(currentSt!==0){
+        showToast("시퀀스 진행 중에는 강제 점화를 사용할 수 없습니다.", "warn");
         return;
       }
       if(!isControlUnlocked()){
@@ -2791,6 +2805,7 @@
       el.statusText = document.getElementById("statusText");
       el.countdown = document.getElementById("countdown");
       el.lockoutBg = document.getElementById("lockoutBg");
+      el.kstTime = document.getElementById("kst-time");
 
       el.thrust = document.getElementById("thrust");
       el.pressure = document.getElementById("pressure");
