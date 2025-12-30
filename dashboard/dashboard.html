@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+  <title>FLASH6 - DASHBOARD</title>
+
+  <!-- ✅ 이미지 프리로드(LOCKOUT/토스트/아이콘 늦게 뜨는거 방지) -->
+  <link rel="preload" as="image" href="img/Flash_logo.png">
+  <link rel="preload" as="image" href="img/Danger.svg">
+  <link rel="preload" as="image" href="img/Tick.svg">
+  <link rel="preload" as="image" href="img/Graph.svg">
+  <link rel="preload" as="image" href="img/Activity.svg">
+  <link rel="preload" as="image" href="img/RS_1.svg">
+  <link rel="preload" as="image" href="img/RS_2.svg">
+  <link rel="preload" as="image" href="img/RS_all.svg">
+
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#f3f4f6;--bg-soft:#e5e7eb;
+      --card-bg:rgba(255,255,255,0.96);
+      --card-glass-border-outer:rgba(255,255,255,0.95);
+      --card-glass-border-inner:rgba(148,163,184,0.88);
+      --card-shadow:0 18px 40px rgba(15,23,42,0.12);
+      --text-main:#0f172a;--text-soft:#6b7280;--text-mono:#374151;
+      --accent:#2563eb;--accent-soft:rgba(37,99,235,0.10);--accent-strong:#1d4ed8;
+      --ok:#16a34a;--ok-soft:rgba(22,163,74,0.12);
+      --danger:#ef4444;--danger-soft:rgba(248,113,113,0.12);
+      --warn:#f59e0b;--warn-soft:rgba(245,158,11,0.16);
+      --border-subtle:rgba(148,163,184,0.42);--border-strong:rgba(148,163,184,0.82);
+      --radius-xl:22px;--radius-lg:18px;--radius-md:14px;--radius-pill:999px;
+    }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+      background:
+        radial-gradient(circle at top left,#e0edff 0,transparent 55%),
+        radial-gradient(circle at top right,#fde2ff 0,transparent 55%),
+        linear-gradient(180deg,#f9fafb,#eef2ff);
+      min-height:100vh;display:flex;justify-content:center;align-items:flex-start;
+      padding:14px;color:var(--text-main);
+    }
+
+    /* ✅ LOCKOUT 배경(빨간 그라데이션 깜빡임) */
+    .page-wrap{
+      width:100%;max-width:1240px;display:flex;flex-direction:column;gap:12px;position:relative;z-index:1;
+
+      /* ✅ 스플래시 끝나기 전까지 숨김 */
+      opacity:0;
+      transform:translateY(14px) scale(0.92);
+      filter:blur(16px) saturate(0.9);
+      pointer-events:none;
+      transition:opacity .36s ease, transform .46s ease, filter .42s ease;
+    }
+    .page-wrap.ready{
+      opacity:1;
+      transform:none;
+      filter:none;
+      animation:pageReveal .58s cubic-bezier(.22,1,.36,1);
+      pointer-events:auto;
+    }
+
+    .lockout-bg{
+      position:fixed;inset:0;z-index:0;pointer-events:none;
+      opacity:0;transition:opacity .18s ease;
+      background:
+        radial-gradient(circle at 18% 22%, rgba(239,68,68,.55), transparent 60%),
+        radial-gradient(circle at 82% 18%, rgba(249,115,22,.42), transparent 60%),
+        radial-gradient(circle at 50% 90%, rgba(220,38,38,.22), transparent 60%),
+        linear-gradient(180deg, rgba(127,29,29,.35), rgba(15,23,42,.12));
+    }
+    .lockout-bg.active{
+      opacity:1;
+      animation:lockoutPulse 1.05s ease-in-out infinite;
+    }
+    @keyframes lockoutPulse{
+      0%{transform:scale(1);opacity:.18;filter:saturate(1.0)}
+      50%{transform:scale(1.02);opacity:.62;filter:saturate(1.35)}
+      100%{transform:scale(1);opacity:.18;filter:saturate(1.0)}
+    }
+    @keyframes pageReveal{
+      0%{transform:translateY(14px) scale(0.92);opacity:0;filter:blur(16px) saturate(0.9);}
+      60%{transform:translateY(4px) scale(0.98);opacity:1;filter:blur(4px) saturate(1.02);}
+      100%{transform:none;opacity:1;filter:none;}
+    }
+
+    /* =========================
+       ✅ SPLASH (Intro + Preload)
+       ========================= */
+    #splash{
+      position:fixed; inset:0; z-index:9999;
+      background:#ffffff; /* “아무것도 없는 바탕” */
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      gap:14px;
+      transition:opacity .28s ease, transform .28s ease;
+    }
+    #splash.hide{
+      opacity:0;
+      pointer-events:none;
+      transform:scale(1.01);
+    }
+    #splashLogo{
+      width:min(80px, 17vw);
+      height:auto;
+      display:block;
+      filter:drop-shadow(0 10px 22px rgba(15,23,42,0.12));
+    }
+    #splashLoading{
+      font-size:12px;
+      color:#64748b;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      opacity:0;
+      transform:translateY(4px);
+      transition:opacity .24s ease, transform .24s ease;
+      user-select:none;
+    }
+    #splashLoading.show{
+      opacity:1;
+      transform:translateY(0);
+    }
+    #splashDots{
+      display:inline-block;
+      width:18px;
+      text-align:left;
+    }
+
+    .top-bar{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .top-left{display:flex;align-items:center;gap:12px}
+    .logo-img{height:40px;width:auto;display:block;filter:drop-shadow(0 2px 6px rgba(15,23,42,0.18))}
+    .title-block{display:flex;flex-direction:column;gap:2px}
+    .title-main{font-size:18px;font-weight:600;letter-spacing:.03em}
+    .title-sub{font-size:12px;color:var(--text-soft)}
+    .top-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .chip{
+      display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--radius-pill);
+      background:rgba(255,255,255,0.9);border:1px solid var(--border-subtle);
+      backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+      font-size:11px;color:var(--text-soft)
+    }
+    .chip-label{font-weight:500}
+    .chip-value{font-weight:600;color:var(--text-main)}
+    .chip-dot{width:8px;height:8px;border-radius:999px;background:var(--danger);box-shadow:0 0 0 4px var(--danger-soft)}
+    .chip-dot.ok{background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+    .shell{width:100%;display:flex;flex-direction:column;gap:12px}
+    .card-base{
+      position:relative;background:var(--card-bg);border-radius:var(--radius-xl);
+      border:1px solid rgba(148,163,184,0.62);box-shadow:var(--card-shadow);
+      padding:16px 18px;overflow:hidden;
+      backdrop-filter:blur(20px) saturate(1.25);-webkit-backdrop-filter:blur(20px) saturate(1.25)
+    }
+    .card-base::before{
+      content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+      background:linear-gradient(135deg,var(--card-glass-border-outer),var(--card-glass-border-inner));
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;mask-composite:exclude;
+      opacity:0.92;pointer-events:none
+    }
+    .card-base::after{
+      content:"";position:absolute;inset:0;border-radius:inherit;
+      background:radial-gradient(circle at 0 0,rgba(255,255,255,0.32),transparent 55%);
+      opacity:0.6;pointer-events:none
+    }
+    .card-base>*{position:relative;z-index:1}
+    .side-col{display:flex;flex-direction:column;gap:12px}
+    .card-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+    .card-title{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--text-soft)}
+    .card-badge{padding:3px 10px;border-radius:var(--radius-pill);background:var(--accent-soft);color:var(--accent-strong);font-size:11px;font-weight:500;white-space:nowrap}
+    .section-label{margin-top:10px;font-size:11px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:#9ca3af}
+    .status-row{display:flex;flex-direction:column;gap:6px}
+    .status-line{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+    #statusText{font-size:clamp(18px,2.4vw,20px);font-weight:600;color:var(--text-main)}
+    #statusPill{padding:4px 10px;border-radius:var(--radius-pill);font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase}
+    .status-ready{background:var(--ok-soft);color:var(--ok);box-shadow:0 0 0 1px rgba(22,163,74,0.5)}
+    .status-count{background:var(--warn-soft);color:var(--warn);box-shadow:0 0 0 1px rgba(245,158,11,0.5)}
+    .status-fire{background:rgba(248,113,113,0.14);color:#b91c1c;box-shadow:0 0 0 1px rgba(239,68,68,0.6)}
+    .status-abort{background:rgba(254,202,202,0.9);color:#b91c1c;box-shadow:0 0 0 1px rgba(239,68,68,0.6)}
+    .status-disc{background:#e5e7eb;color:#4b5563;box-shadow:0 0 0 1px rgba(148,163,184,0.9)}
+    .status-lock{background:rgba(239,68,68,0.14);color:#991b1b;box-shadow:0 0 0 1px rgba(239,68,68,0.65)}
+    .countdown-wrap{margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    .countdown-label-block{display:flex;flex-direction:column;gap:2px}
+    .countdown-caption{font-size:11px;color:var(--text-soft);letter-spacing:.14em;text-transform:uppercase}
+    .countdown-sub{font-size:12px;color:var(--text-soft)}
+    #countdown{
+      font-family:SFMono-Regular,ui-monospace,Menlo,Monaco,Consolas,"Courier New",monospace;
+      font-size:clamp(46px,7vw,64px);font-weight:800;letter-spacing:.05em;color:var(--danger);
+      text-align:right;min-width:120px
+    }
+    #countdown span{font-size:14px;margin-left:4px;color:var(--text-soft);letter-spacing:0}
+    .pill-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .pill{
+      padding:5px 12px;border-radius:var(--radius-pill);font-size:11px;
+      border:1px solid rgba(148,163,184,0.5);background:rgba(249,250,251,0.96);color:var(--text-soft);
+      display:inline-flex;align-items:center;gap:4px;white-space:nowrap
+    }
+    .pill strong{color:var(--text-main);font-weight:600;margin-right:4px}
+    .pill-sep{opacity:.55;margin:0 2px}
+    .pill-green{background:rgba(22,163,74,0.12);color:var(--ok);border-color:rgba(22,163,74,0.4)}
+    .pill-red{background:rgba(248,113,113,0.12);color:var(--danger);border-color:rgba(248,113,113,0.4)}
+    .pill-gray{background:#e5e7eb;color:#374151;border-color:rgba(148,163,184,0.7)}
+    .ign-metrics{margin-top:6px;font-size:11px;color:var(--text-soft);display:flex;gap:10px}
+    .ign-metrics span{white-space:nowrap}
+    .item-grid{display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px}
+    .item{
+      display:flex;justify-content:space-between;align-items:center;
+      padding:9px 10px;border-radius:var(--radius-md);
+      background:linear-gradient(135deg,#f9fafb,#eef2ff);
+      border:1px solid rgba(209,213,219,0.9)
+    }
+    .label{
+      font-size:12px;color:#475569;font-weight:600;letter-spacing:.01em;
+      display:flex;align-items:center;gap:8px;
+    }
+    .label-icon{
+      width:6px;height:6px;border-radius:999px;
+      background:var(--accent);
+      box-shadow:0 0 0 4px var(--accent-soft);
+      animation:pulse-dot 3s ease-in-out infinite;
+    }
+    .value{
+      display:flex;justify-content:flex-end;align-items:baseline;gap:7px;
+      font-size:0;font-weight:600;color:var(--text-main);
+    }
+    .value .num{font-size:clamp(17px,2.2vw,21px);font-weight:650;letter-spacing:.01em;}
+    .value .unit{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;}
+    .item-pressure .value-block{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
+    .switch{position:relative;display:inline-block;width:52px;height:30px;}
+    .switch input{display:none}
+    .slider{
+      position:absolute;inset:0;cursor:pointer;background:#e5e7eb;border-radius:999px;
+      border:1px solid rgba(148,163,184,0.9);transition:.26s
+    }
+    .slider:before{
+      position:absolute;content:'';height:24px;width:24px;left:3px;bottom:2px;background:#ffffff;border-radius:50%;
+      box-shadow:0 4px 10px rgba(148,163,184,0.9);transition:.26s
+    }
+    input:checked+.slider{
+      background:linear-gradient(90deg,#22c55e,#4ade80);
+      box-shadow: inset 0 0 0 3px rgba(34,197,94,0.32);
+    }
+    input:checked+.slider:before{transform:translateX(20px)}
+    button{
+      border:none;border-radius:var(--radius-pill);font-family:inherit;cursor:pointer;
+      transition:transform .12s ease,box-shadow .12s ease,background .12s ease,color .12s ease,border-color .12s ease;
+      -webkit-tap-highlight-color:transparent;
+      touch-action:manipulation;
+    }
+    button:disabled{opacity:.45;box-shadow:none;cursor:default;transform:none}
+    button:hover:not(:disabled){transform:translateY(-1px)}
+    button:active:not(:disabled){transform:translateY(0);box-shadow:none}
+    .controls-card button,.log-card button,.settings-dialog button,.launcher-dialog button{
+      display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12px;font-weight:500
+    }
+    .toolbar-btn{
+      border-radius:var(--radius-pill);border:1px solid rgba(148,163,184,0.6);
+      background:linear-gradient(135deg,#f9fafb,#e5e7eb);color:#4b5563;
+      padding:6px 10px;height:34px;box-shadow:0 8px 18px rgba(148,163,184,0.35);white-space:nowrap
+    }
+    .primary-btn{
+      border-radius:var(--radius-pill);
+      border:1px solid rgba(249,115,22,0.65);
+      background:linear-gradient(120deg,rgba(244,67,54,0.78),rgba(249,115,22,0.78));
+      color:#fff7ed;
+      font-size:14px;font-weight:700;letter-spacing:.05em;
+      padding:10px 18px;height:42px;width:100%;
+      box-shadow:0 10px 26px rgba(249,115,22,0.32),0 6px 14px rgba(239,68,68,0.24);
+      text-shadow:0 1px 2px rgba(0,0,0,0.12);
+      backdrop-filter:blur(10px) saturate(1.15);-webkit-backdrop-filter:blur(10px) saturate(1.15);
+    }
+    .secondary-btn{
+      border-radius:var(--radius-pill);
+      border:1px solid rgba(148,163,184,0.55);
+      background:linear-gradient(135deg,rgba(34, 36, 40, 0.78),rgba(64, 71, 84, 0.78));
+      color:#f8fafc;
+      font-size:12px;font-weight:700;letter-spacing:.04em;
+      padding:10px 16px;height:42px;width:100%;
+      box-shadow:0 8px 20px rgba(107,114,128,0.28);
+      text-shadow:0 1px 2px rgba(0,0,0,0.12);
+      backdrop-filter:blur(10px) saturate(1.05);-webkit-backdrop-filter:blur(10px) saturate(1.05);
+    }
+    .force-btn,.launcher-open-btn{
+      margin-top:6px;width:100%;padding:10px 14px;border-radius:var(--radius-pill);
+      border:1px solid rgba(148,163,184,0.75);background:linear-gradient(135deg,#f9fafb,#e5e7eb);
+      color:#111827;font-size:13px;font-weight:600;box-shadow:0 8px 18px rgba(148,163,184,0.35)
+    }
+    .force-btn{justify-content:center}
+    .force-btn.disabled{opacity:.45;pointer-events:none;filter:saturate(0.6) grayscale(0.1)}
+    .launcher-open-btn{justify-content:space-between}
+    .controls-card{padding-top:14px;padding-bottom:14px}
+    .controls-subtitle{font-size:11px;color:var(--text-soft);margin-top:2px}
+    .controls-help{font-size:11px;color:var(--accent-strong);margin-top:4px;cursor:pointer;text-decoration:underline}
+    .controls-grid{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+    .controls-section-label{margin-top:6px;font-size:11px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:#9ca3af}
+    .controls-toolbar{margin-top:4px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+    .controls-main-row{display:flex;gap:8px;align-items:stretch;margin-top:4px}
+    .primary-btn-wrap{flex:3;display:flex}
+    .abort-btn-wrap{flex:1.4;display:flex}
+    .control-row{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin-top:6px}
+    .control-tile{
+      padding:10px 12px;border-radius:var(--radius-md);
+      border:1px solid rgba(209,213,219,0.9);background:linear-gradient(135deg,#f9fafb,#eef2ff);
+      display:flex;align-items:center;justify-content:space-between;gap:10px;flex:1 1 0
+    }
+    .control-tile-label{font-size:13px;color:#111827;font-weight:500}
+    .control-tile-sub{font-size:11px;color:#6b7280;margin-top:2px}
+    .controls-header-actions{display:flex;align-items:center;gap:6px}
+    .controls-gear-btn{
+      width:26px;height:26px;border-radius:999px;border:1px solid rgba(148,163,184,0.75);
+      background:radial-gradient(circle at 30% 20%,#f9fafb,#e5e7eb);
+      color:#4b5563;font-size:14px;display:flex;align-items:center;justify-content:center;
+      box-shadow:0 8px 18px rgba(148,163,184,0.4);padding:0
+    }
+    .controls-gear-btn:hover{background:#0f172a;color:#e5e7eb}
+    .charts-card{padding:14px}
+    .chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap}
+    .chart-title-main{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--text-soft)}
+    .chart-controls{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+    .chart-btn{
+      border-radius:var(--radius-pill);border:1px solid rgba(148,163,184,0.7);
+      background:#f9fafb;color:#4b5563;padding:2px 8px;font-size:11px;min-width:26px;text-align:center
+    }
+    .chart-btn-live{background:var(--accent);border-color:var(--accent-strong);color:#eff6ff;font-weight:600;letter-spacing:.05em}
+    .chart-row{display:flex;flex-direction:row;flex-wrap:wrap;gap:10px;margin-top:4px}
+    .chart-box{
+      background:linear-gradient(135deg,#eef2ff,#e5e7eb);
+      border-radius:var(--radius-md);padding:6px;border:1px solid rgba(148,163,184,0.7);flex:1 1 260px
+    }
+    .chart-box-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+    .chart-title{font-size:12px;font-weight:600;color:#111827}
+    .chart-badge{font-size:10px;padding:3px 8px;border-radius:var(--radius-pill);background:rgba(255,255,255,0.8);color:#4b5563}
+    .chart-box canvas{width:100%;display:block}
+    .chart-box canvas{ height:220px; }
+    @media(min-width:768px){ .chart-box canvas{ height:240px; } }
+    @media(min-width:1100px){ .chart-box canvas{ height:260px; } }
+    @media(max-width:900px){
+      .chart-row{flex-direction:column}
+      .chart-box{flex:1 1 auto}
+      .chart-box canvas{ height:clamp(220px, 38vh, 300px); }
+    }
+
+    .log-card{
+      position:relative;background:#020617;color:#e5e7eb;border-radius:20px;
+      padding:10px;box-shadow:0 18px 50px rgba(15,23,42,0.85);
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace;
+      font-size:11px;display:flex;flex-direction:column;height:260px;max-height:260px;
+      border:1px solid rgba(15,23,42,0.95);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);
+      overflow:hidden
+    }
+    @media(min-width:1024px){.log-card{height:300px;max-height:300px}}
+    .log-card::before{
+      content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+      background:linear-gradient(135deg,rgba(148,163,184,0.8),rgba(37,99,235,0.9),rgba(15,23,42,1));
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;mask-composite:exclude;opacity:0.8;pointer-events:none
+    }
+    .log-card::after{
+      content:"";position:absolute;inset:0;border-radius:inherit;
+      background:radial-gradient(circle at 0 0,rgba(248,250,252,0.12),transparent 55%);
+      opacity:0.8;pointer-events:none
+    }
+    .log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px}
+    .log-title{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#9ca3af}
+    .terminal-shell{
+      margin-top:4px;border-radius:14px;border:1px solid #020617;background:#020617;
+      box-shadow:0 18px 40px rgba(15,23,42,0.9);
+      flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden
+    }
+    .terminal-header{display:flex;align-items:center;justify-content:space-between;padding:6px 9px;background:#020617;border-bottom:1px solid #111827}
+    .term-title{font-size:10px;color:#9ca3af}
+    #logView{
+      padding:8px 10px;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;
+      white-space:pre-wrap;word-wrap:break-word;scrollbar-width:thin;scrollbar-color:#4b5563 #020617
+    }
+    #logView::-webkit-scrollbar{width:6px}
+    #logView::-webkit-scrollbar-track{background:#020617}
+    #logView::-webkit-scrollbar-thumb{background:#4b5563;border-radius:999px}
+    .log-line{font-family:inherit;font-size:11px;line-height:1.4;color:#e5e7eb}
+    .log-prefix{color:#6b7280}
+
+    .toast-container{position:fixed;top:18px;right:18px;z-index:80;display:flex;flex-direction:column;gap:10px;pointer-events:none}
+    .toast{
+      position:relative;width:min(420px,calc(100vw - 36px));padding:12px 14px;border-radius:18px;
+      background:rgba(255,255,255,0.62);
+      border:1px solid var(--toast-border, rgba(148,163,184,0.55));
+      backdrop-filter:blur(24px) saturate(1.25);-webkit-backdrop-filter:blur(24px) saturate(1.25);
+      box-shadow:0 18px 40px rgba(15,23,42,0.18);
+      overflow:hidden;display:flex;align-items:center;gap:12px;
+      opacity:0;transform:translateX(14px);pointer-events:auto;
+    }
+    .toast::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 20% 0,rgba(255,255,255,0.26),transparent 55%);pointer-events:none}
+    .toast-show{animation:toastIn .24s ease-out forwards}
+    .toast-hide{animation:toastOut .18s ease-in forwards}
+    @keyframes toastIn{to{opacity:1;transform:translateX(0)}}
+    @keyframes toastOut{to{opacity:0;transform:translateX(14px)}}
+    .toast-icon{
+      width:44px;height:44px;border-radius:999px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+      background:radial-gradient(circle at 30% 20%,rgba(255,255,255,0.95),rgba(255,255,255,0.55));
+      border:1px solid rgba(255,255,255,0.70);
+      box-shadow:0 10px 22px rgba(15,23,42,0.18),0 0 0 6px var(--toast-ring, rgba(148,163,184,0.16));
+    }
+    .toast-icon img{width:22px;height:22px;display:block;filter:drop-shadow(0 2px 6px rgba(15,23,42,0.18))}
+    .toast-body{flex:1;min-width:0}
+    .toast-title{font-size:13px;font-weight:800;letter-spacing:.02em;color:#0f172a}
+    .toast-text{margin-top:3px;font-size:12px;color:#475569;line-height:1.45;word-break:keep-all}
+    .toast-info{--toast-border:rgba(96,165,250,0.40);--toast-ring:rgba(96,165,250,0.16)}
+    .toast-success{--toast-border:rgba(52,211,153,0.40);--toast-ring:rgba(52,211,153,0.16)}
+    .toast-warn{--toast-border:rgba(251,191,36,0.45);--toast-ring:rgba(251,191,36,0.18)}
+    .toast-error{--toast-border:rgba(251,113,133,0.45);--toast-ring:rgba(251,113,133,0.18)}
+    .toast-ignite{--toast-border:rgba(249,115,22,0.45);--toast-ring:rgba(249,115,22,0.18)}
+    @media(max-width:600px){.toast-container{top:14px;right:12px}}
+
+    .confirm-overlay,.settings-overlay{
+      position:fixed;inset:0;background:rgba(15,23,42,0.45);
+      display:flex;align-items:center;justify-content:center;padding:16px;z-index:50
+    }
+    .hidden{display:none}
+    .confirm-dialog{
+      position:relative;background:#020617;border-radius:20px;padding:18px 18px 14px;width:100%;max-width:360px;
+      box-shadow:0 22px 55px rgba(15,23,42,0.95);color:#e5e7eb;border:1px solid rgba(59,130,246,0.85);
+      backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);overflow:hidden
+    }
+    .confirm-dialog::before{
+      content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+      background:linear-gradient(145deg,rgba(248,250,252,0.95),rgba(59,130,246,0.9),rgba(15,23,42,1));
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;mask-composite:exclude;opacity:0.9;pointer-events:none
+    }
+    .confirm-dialog::after{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(circle at 20% 0,rgba(251,191,36,0.22),transparent 60%);opacity:0.9;pointer-events:none}
+    .confirm-icon{
+      width:44px;height:44px;border-radius:999px;background:radial-gradient(circle at 30% 20%,#fff7ed,#fed7aa);
+      display:flex;align-items:center;justify-content:center;margin:2px auto 10px;box-shadow:0 10px 25px rgba(248,148,77,0.6)
+    }
+    .confirm-icon img{width:24px;height:24px;display:block;filter:drop-shadow(0 2px 6px rgba(15,23,42,0.35))}
+    .confirm-title{font-size:15px;font-weight:600;text-align:center;margin-bottom:4px}
+    .confirm-text{font-size:12px;color:#9ca3af;margin-bottom:10px;line-height:1.5;text-align:center}
+    .confirm-note{font-size:11px;color:#64748b;text-align:center;margin-bottom:10px}
+    .confirm-actions{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:4px}
+    .confirm-cancel{border:none;background:none;color:#9ca3af;font-size:11px;text-decoration:underline;cursor:pointer;margin-top:2px;box-shadow:none}
+    .confirm-cancel:hover{color:#e5e7eb}
+    .longpress-wrap{display:flex;justify-content:center;width:100%;margin-bottom:2px}
+    .longpress-btn{
+      position:relative;width:86px;height:86px;border-radius:999px;border:none;
+      background:radial-gradient(circle at 30% 20%,#111827,#020617);
+      color:#e5e7eb;font-size:11px;display:flex;align-items:center;justify-content:center;
+      box-shadow:0 0 0 1px rgba(51,65,85,0.9),0 18px 34px rgba(15,23,42,0.95);overflow:hidden
+    }
+    .longpress-btn::before{content:'';position:absolute;inset:16px;border-radius:999px;background:radial-gradient(circle at 30% 20%,#111827,#020617);opacity:.95}
+    .longpress-btn span{position:relative;text-align:center;line-height:1.2;pointer-events:none;z-index:1;font-weight:500;letter-spacing:.06em}
+    .longpress-ring{position:absolute;inset:5px;border-radius:999px;overflow:hidden;pointer-events:none}
+    .longpress-spinner{
+      position:absolute;inset:0;border-radius:999px;
+      background:conic-gradient(#38bdf8 var(--lp-angle,0deg),rgba(15,23,42,0.18) var(--lp-angle,0deg) 360deg);
+      -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 100%);
+      mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 100%);
+      box-shadow:0 0 16px rgba(56,189,248,0.6)
+    }
+    .force-actions{width:100%;display:flex;flex-direction:column;gap:10px;margin-top:8px}
+    .force-cancel-big{
+      width:100%;height:40px;border-radius:var(--radius-pill);
+      border:1px solid rgba(148,163,184,0.75);
+      background:linear-gradient(135deg,#f9fafb,#e5e7eb);
+      color:#111827;font-size:14px;font-weight:800;
+      box-shadow:0 10px 24px rgba(15,23,42,0.65);
+    }
+    .force-danger-small{
+      width:100%;height:40px;border-radius:var(--radius-pill);
+      border:1px solid rgba(239,68,68,0.9);
+      background:linear-gradient(135deg,#ef4444,#f97316);
+      color:#fff7ed;font-size:12px;font-weight:800;letter-spacing:.04em;
+      box-shadow:0 10px 22px rgba(239,68,68,0.55);
+    }
+
+    .launcher-dialog{
+      position:relative;background:#020617;border-radius:20px;padding:16px 18px 14px;width:100%;max-width:340px;
+      box-shadow:0 22px 55px rgba(15,23,42,0.95);border:1px solid rgba(59,130,246,0.8);color:#e5e7eb;
+      backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);
+      overflow:hidden
+    }
+    .launcher-dialog::before{
+      content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+      background:linear-gradient(145deg,rgba(248,250,252,0.9),rgba(129,140,248,0.9),rgba(15,23,42,1));
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;mask-composite:exclude;opacity:0.85;pointer-events:none
+    }
+    .launcher-dialog::after{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(circle at 15% 0,rgba(191,219,254,0.25),transparent 60%);opacity:0.9;pointer-events:none}
+    .launcher-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+    .launcher-title{font-size:13px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:#9ca3af}
+    .launcher-close-btn{border:none;background:transparent;font-size:18px;line-height:1;padding:2px 4px;border-radius:999px;box-shadow:none;color:#9ca3af}
+    .launcher-close-btn:hover{background:rgba(15,23,42,0.6);color:#e5e7eb}
+    .launcher-note{font-size:11px;color:#9ca3af;margin-bottom:10px}
+    .launcher-controls{margin-top:4px;display:flex;flex-direction:column;gap:10px}
+    .launcher-arrow-row{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;padding:10px 0}
+    .launcher-arrow-btn{
+      width:92px;height:46px;border-radius:999px;border:none;
+      background:linear-gradient(135deg,#e5e7eb,#9ca3af);
+      color:#111827;font-size:18px;font-weight:800;
+      box-shadow:0 10px 24px rgba(15,23,42,0.7);
+      user-select:none;touch-action:none
+    }
+    .launcher-arrow-btn.pressed{background:#4b5563;color:#f9fafb}
+    .launcher-hint{font-size:10px;color:#9ca3af;text-align:center;margin-top:2px}
+    .controls-hint{font-size:11px;color:#6b7280;margin-top:2px}
+    .control-tile.disabled{opacity:.55;pointer-events:none;filter:grayscale(0.1)}
+
+    .inspection-dialog{
+      position:relative;width:520px;max-width:95vw;
+      background:rgba(255,255,255,0.97);border-radius:18px;
+      box-shadow:0 22px 55px rgba(15,23,42,0.18);
+      border:1px solid rgba(148,163,184,0.7);
+      padding:14px 16px 12px;
+      color:var(--text-main);
+      backdrop-filter:blur(20px) saturate(1.1);-webkit-backdrop-filter:blur(20px) saturate(1.1);
+    }
+    .inspection-header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+    .inspection-title{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0f172a}
+    .inspection-sub{font-size:11px;color:#6b7280;margin-top:2px}
+    .inspection-close-btn{border:none;background:transparent;font-size:18px;line-height:1;padding:2px 4px;border-radius:999px;box-shadow:none;color:#9ca3af}
+    .inspection-close-btn:hover{background:rgba(229,231,235,0.7);color:#111827}
+    .inspection-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+    .inspection-item{
+      display:flex;justify-content:space-between;align-items:center;gap:10px;
+      padding:10px 12px;border-radius:14px;
+      border:1px solid rgba(209,213,219,0.9);
+      background:linear-gradient(135deg,#f9fafb,#eef2ff);
+    }
+    .inspection-left{display:flex;align-items:center;gap:10px}
+    .inspection-dot{width:10px;height:10px;border-radius:999px;background:#cbd5e1;box-shadow:0 0 0 5px rgba(203,213,225,0.28)}
+    .inspection-label{font-size:13px;font-weight:600;color:#0f172a}
+    .inspection-desc{font-size:11px;color:#6b7280}
+    .inspection-status{font-size:12px;color:#4b5563;font-weight:600;white-space:nowrap}
+    .inspection-item.state-running .inspection-dot{background:#f59e0b;box-shadow:0 0 0 5px rgba(245,158,11,0.22)}
+    .inspection-item.state-ok .inspection-dot{background:var(--ok);box-shadow:0 0 0 5px var(--ok-soft)}
+    .inspection-item.state-bad .inspection-dot{background:var(--danger);box-shadow:0 0 0 5px var(--danger-soft)}
+    .inspection-item.state-running .inspection-status{color:#f59e0b}
+    .inspection-item.state-ok .inspection-status{color:#166534}
+    .inspection-item.state-bad .inspection-status{color:#b91c1c}
+    .inspection-footer{margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .inspection-result{font-size:12px;font-weight:600;color:#475569}
+    .inspection-result.ok{color:#166534}
+    .inspection-result.error{color:#b91c1c}
+    .inspection-result.running{color:#f59e0b}
+    .inspection-actions{display:flex;gap:8px}
+
+    .settings-dialog{
+      position:relative;width:640px;max-width:95vw;height:460px;max-height:90vh;
+      background:rgba(255,255,255,0.97);border-radius:20px;box-shadow:0 22px 55px rgba(15,23,42,0.18);
+      padding:14px 18px 12px;color:var(--text-main);
+      border:1px solid rgba(148,163,184,0.7);
+      display:flex;flex-direction:column;
+      backdrop-filter:blur(22px) saturate(1.2);-webkit-backdrop-filter:blur(22px) saturate(1.2);
+      overflow:hidden
+    }
+    .settings-dialog::before{
+      content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+      background:linear-gradient(145deg,rgba(255,255,255,0.98),rgba(148,163,184,0.8));
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;mask-composite:exclude;opacity:0.85;pointer-events:none
+    }
+    .settings-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0}
+    .settings-title{font-size:13px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--text-soft)}
+    .settings-close-btn{border:none;background:transparent;font-size:18px;line-height:1;padding:2px 4px;border-radius:999px;box-shadow:none;color:#9ca3af}
+    .settings-close-btn:hover{background:rgba(229,231,235,0.7);color:#111827}
+    .settings-body{margin-top:4px;display:flex;gap:12px;flex:1;overflow-y:auto;min-height:0}
+    .settings-nav{width:160px;border-right:1px solid rgba(209,213,219,0.9);padding-right:8px;display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+    .settings-nav-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.10em;color:#9ca3af;margin-bottom:4px}
+
+    /* ✅ 설정 네비/버튼 살짝 업그레이드 */
+    .settings-nav-btn{
+      border:none;background:transparent;padding:6px 8px;border-radius:12px;font-size:12px;text-align:left;color:#6b7280;
+      display:flex;justify-content:space-between;align-items:center;box-shadow:none;
+      border:1px solid transparent;position:relative;padding-left:26px;
+      transition:background .12s ease,border-color .12s ease,color .12s ease;
+    }
+    .settings-nav-btn::before{
+      content:"";position:absolute;left:10px;top:50%;
+      width:7px;height:7px;border-radius:999px;transform:translateY(-50%);
+      background:rgba(148,163,184,0.9);box-shadow:0 0 0 4px rgba(148,163,184,0.14);opacity:.55;
+    }
+    .settings-nav-btn span{font-weight:500}
+    .settings-nav-badge{font-size:10px;color:#9ca3af}
+    .settings-nav-btn:hover{background:#f3f4f6}
+    .settings-nav-btn.active{
+      background:linear-gradient(135deg,#0f172a,#111827);
+      border-color:rgba(148,163,184,0.28);
+      color:#e5e7eb;
+    }
+    .settings-nav-btn.active .settings-nav-badge{color:#e5e7eb;opacity:.7}
+    .settings-nav-btn.active::before{
+      background:#38bdf8;box-shadow:0 0 0 5px rgba(56,189,248,0.22);opacity:1;
+    }
+
+    .settings-panels{flex:1;padding-left:4px;min-width:0}
+    .settings-panel{display:none;animation:fadeInSettings .15s ease-out}
+    .settings-panel.active{display:block}
+    .settings-group{padding:6px 0 10px;border-top:1px solid rgba(229,231,235,0.9)}
+    .settings-group:first-of-type{border-top:none}
+    .settings-group-title{font-size:12px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px}
+    .settings-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:6px 0}
+    .settings-label{font-size:13px;color:#111827;font-weight:600}
+    .settings-desc{font-size:11px;color:#6b7280;text-align:right;line-height:1.35}
+    .settings-select{min-width:110px;padding:4px 8px;font-size:12px;border-radius:999px;border:1px solid rgba(148,163,184,0.9);background:#f9fafb}
+    .settings-number-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+    .settings-number{width:90px;padding:6px 8px;font-size:13px;border-radius:999px;border:1px solid rgba(148,163,184,0.9);background:#f9fafb;text-align:center;outline:none}
+    .settings-number:focus{box-shadow:0 0 0 2px rgba(59,130,246,0.35);border-color:rgba(59,130,246,0.9)}
+    .settings-footer{margin-top:8px;display:flex;justify-content:flex-end;flex-shrink:0}
+    .settings-save-btn{padding:8px 16px;font-size:13px;border-radius:999px;border:none;background:#0f172a;color:#e5e7eb;box-shadow:0 8px 18px rgba(15,23,42,0.4)}
+    .footer-nav{margin-top:6px;display:flex;justify-content:center}
+    .footer-meta{font-size:11px;color:#9ca3af}
+    .hint-mini{margin-top:3px;font-size:11px;color:#64748b;line-height:1.35}
+    .hint-mini strong{color:#0f172a}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace}
+    .serial-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid rgba(148,163,184,0.55);background:rgba(249,250,251,0.96);font-size:11px;color:#64748b}
+    .serial-pill.ok{border-color:rgba(22,163,74,0.45);background:rgba(22,163,74,0.10);color:#166534}
+    .serial-pill.bad{border-color:rgba(239,68,68,0.45);background:rgba(239,68,68,0.10);color:#991b1b}
+    .serial-pill .dot{width:8px;height:8px;border-radius:999px;background:#94a3b8;box-shadow:0 0 0 4px rgba(148,163,184,0.18)}
+    .serial-pill.ok .dot{background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+    .serial-pill.bad .dot{background:var(--danger);box-shadow:0 0 0 4px var(--danger-soft)}
+
+    button:focus-visible,input:focus-visible,select:focus-visible{
+      outline:none;
+      box-shadow:0 0 0 3px rgba(59,130,246,0.35);
+    }
+
+    @keyframes pulse-dot{
+      0%{transform:scale(1);box-shadow:0 0 0 3px rgba(37,99,235,0.18)}
+      50%{transform:scale(1.05);box-shadow:0 0 0 5px rgba(37,99,235,0.26)}
+      100%{transform:scale(1);box-shadow:0 0 0 3px rgba(37,99,235,0.18)}
+    }
+    @keyframes fadeInSettings{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+    #launcherOverlay{align-items:center;justify-content:center}
+    #inspectionOverlay{align-items:center;justify-content:center}
+    @media(max-width:600px){#launcherOverlay{align-items:center!important;justify-content:center!important;padding:16px!important}}
+    @media(max-width:600px){#inspectionOverlay{align-items:center!important;justify-content:center!important;padding:0 12px!important}}
+    @media(max-width:767px){
+      .shell{display:flex;flex-direction:column;gap:10px}
+      .side-col{display:contents}
+      .main-card{order:1}
+      .controls-card{order:2}
+      .charts-card{order:3}
+      .log-card{order:4}
+    }
+    @media(min-width:768px){
+      .shell{display:grid;grid-template-columns:minmax(0,2.8fr) minmax(320px,1fr);grid-template-areas:"main side" "charts side";gap:14px}
+      .main-card{grid-area:main}
+      .charts-card{grid-area:charts;min-height:220px}
+      .side-col{grid-area:side}
+      .item-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+    @media(min-width:1100px){.shell{grid-template-columns:minmax(0,2.8fr) minmax(340px,1fr)}}
+    @media(max-width:600px){
+      body{padding:10px}
+      .top-bar{flex-direction:column;align-items:stretch;gap:8px}
+      .top-right{justify-content:flex-start}
+      .logo-img{height:40px}
+      .title-main{font-size:16px}
+      .title-sub{font-size:11px}
+      .card-base{padding:14px 14px}
+      .countdown-wrap{display:grid;grid-template-columns:1fr auto;align-items:end;gap:10px}
+      .countdown-label-block{min-width:0}
+      #countdown{justify-self:end;min-width:0;line-height:1;font-size:clamp(34px,11vw,48px)}
+      .item-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .controls-main-row{flex-direction:column}
+      .primary-btn,.secondary-btn{height:44px}
+      .chart-row{flex-direction:column}
+      .chart-box{flex:1 1 auto}
+      .settings-overlay{align-items:flex-end;justify-content:center;padding:0}
+      .settings-dialog{
+        width:100%;max-width:100%;height:auto;max-height:82vh;border-radius:18px 18px 0 0;margin:0;
+        padding:14px 16px max(12px,env(safe-area-inset-bottom,12px))
+      }
+      .settings-body{flex-direction:column;overflow-y:auto;padding-right:2px}
+      .settings-nav{
+        width:100%;border-right:none;border-bottom:1px solid rgba(209,213,219,0.9);
+        padding-right:0;padding-bottom:6px;flex-direction:row;gap:6px;overflow-x:auto
+      }
+      .settings-nav-btn{flex:1;justify-content:center;padding-left:10px}
+      .settings-nav-btn::before{display:none}
+      .launcher-arrow-btn{width:110px;height:54px;font-size:20px}
+    }
+    @media(max-width:380px){
+      .countdown-wrap{grid-template-columns:1fr}
+      #countdown{margin-top:6px;justify-self:end}
+      .item-grid{grid-template-columns:1fr}
+    }
+
+    /* ✅ LOCKOUT 모달 */
+    .lockout-dialog{max-width:420px;border:1px solid rgba(239,68,68,0.9);}
+    .lockout-dialog::after{background:radial-gradient(circle at 20% 0,rgba(239,68,68,0.22),transparent 60%);}
+    .lockout-close{position:absolute;right:10px;top:10px;color:#cbd5e1;}
+    .lockout-close:hover{background:rgba(15,23,42,0.55);color:#fff;}
+    .lockout-figure{
+      width:100%;border-radius:16px;overflow:hidden;
+      border:1px solid rgba(148,163,184,0.25);
+      background:rgba(2,6,23,0.55);
+      margin:6px 0 12px;
+      box-shadow:0 18px 40px rgba(15,23,42,0.65);
+    }
+    .lockout-img{display:block;width:100%;height:auto;}
+
+    /* ✅ FW 섹션에 작은 F 로고 */
+    .fw-head{
+      display:flex;align-items:center;gap:10px;
+      padding:6px 0 6px;
+    }
+    .fw-f-logo{
+      width:40px;height:40px;object-fit:contain;
+      filter:drop-shadow(0 2px 6px rgba(15,23,42,0.16));
+      opacity:.95;
+    }
+
+    /* ✅ 접근성/JS 호환용 숨김 버튼 */
+    .sr-only{
+      position:absolute !important;
+      width:1px;height:1px;
+      padding:0;margin:-1px;
+      overflow:hidden;clip:rect(0,0,0,0);
+      white-space:nowrap;border:0;
+    }
+
+    /* ✅ 타일을 "버튼"처럼 */
+    .control-tile.is-btn{
+      cursor:pointer;
+      user-select:none;
+      padding:10px 12px;        /* 세로 길이 줄임 */
+      min-height:62px;          /* 기존 70px → 줄임 */
+      transition:transform .12s ease, box-shadow .12s ease, background .12s ease, border-color .12s ease;
+    }
+
+    .control-tile.is-btn:hover{
+      transform:translateY(-1px);
+      border-color:rgba(37,99,235,0.55);
+      box-shadow:0 10px 22px rgba(37,99,235,0.14);
+    }
+
+    .control-tile.is-btn:active{
+      transform:translateY(0);
+      box-shadow:0 6px 14px rgba(148,163,184,0.22);
+    }
+
+    .control-tile.is-btn:focus-visible{
+      outline:none;
+      box-shadow:0 0 0 3px rgba(59,130,246,0.35), 0 10px 22px rgba(37,99,235,0.14);
+      border-color:rgba(59,130,246,0.9);
+    }
+
+    /* ✅ 오른쪽 액션 영역 정렬 고정(줄바꿈 방지) */
+    .control-tile-actions{
+      display:flex;
+      align-items:center;
+      flex-wrap:nowrap;
+      gap:10px;
+    }
+
+    /* ✅ 서브텍스트 조금 타이트하게 */
+    .control-tile-sub{
+      line-height:1.25;
+    }
+
+    /* ✅ 위험 타일(강제 점화) 강조 */
+    .control-tile.is-danger:hover{
+      border-color:rgba(239,68,68,0.55);
+      box-shadow:0 10px 22px rgba(239,68,68,0.18);
+    }
+
+  </style>
+</head>
+<body>
+  <!-- ✅ LOCKOUT 배경 오버레이 -->
+  <div id="lockoutBg" class="lockout-bg" aria-hidden="true"></div>
+
+  <!-- ✅ SPLASH: 로고 먼저 → 2초 뒤 로딩중 → 이미지 프리로드 완료되면 진입 -->
+  <div id="splash" aria-label="loading">
+    <img id="splashLogo" src="img/Flash_logo.png" alt="FLASH">
+    <div id="splashLoading">로딩중<span id="splashDots"></span></div>
+  </div>
+
+  <div class="page-wrap">
+    <div id="toastContainer" class="toast-container"></div>
+
+    <header class="top-bar">
+      <div class="top-left">
+        <img class="logo-img" src="img/Flash_logo.png" alt="ALTIS logo">
+        <div class="title-block">
+        </div>
+      </div>
+      <div class="top-right">
+        <div class="chip" id="conn-chip">
+          <div class="chip-dot" id="conn-dot"></div>
+          <div class="chip-label">STATUS</div>
+          <div class="chip-value" id="conn-text">DISCONNECTED</div>
+        </div>
+        <div class="chip">
+          <div class="chip-label">Wi-Fi</div>
+          <div class="chip-value">192.168.4.1</div>
+        </div>
+        <div class="chip">
+          <div class="chip-label">KST</div>
+          <div class="chip-value" id="kst-time">--:--:--</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="card-base main-card">
+        <div class="card-header">
+          <div class="card-title">COUNTDOWN & STATUS</div>
+          <div class="card-badge">LIVE SESSION</div>
+        </div>
+
+        <div class="status-row">
+          <div class="status-line">
+            <div id="statusText">System ready</div>
+            <div id="statusPill" class="status-ready">READY</div>
+          </div>
+        </div>
+
+        <div class="countdown-wrap">
+          <div class="countdown-label-block">
+            <div class="countdown-caption">T-MINUS</div>
+            <div class="countdown-sub">Main ignition countdown</div>
+
+          <div class="pill-row">
+            <div class="pill">
+              <strong>Snap</strong>
+              <span id="loop-pill">-- ms</span>
+              <span class="pill-sep">·</span>
+              <span id="snap-hz">-- Hz</span>
+            </div>
+
+            <div class="pill">
+              <strong>HX711</strong>
+              <span id="hx-hz">-- Hz</span>
+              <span class="pill-sep">·</span>
+              <span id="cpu-us">-- us</span>
+            </div>
+
+            <div class="pill"><strong>Mode</strong> <span id="mode-pill">-</span></div>
+            <div class="pill"><strong>Relay</strong> <span id="relay-safe-pill">SAFE</span></div>
+          </div>
+        </div>
+
+        <div id="countdown">--<span>s</span></div>
+      </div>
+
+        <div class="section-label">Live Telemetry</div>
+        <div class="ign-metrics">
+          <span id="ignDelayDisplay">Delay --.-s</span>
+          <span id="burnDurationDisplay">Burn --.-s</span>
+        </div>
+
+        <div class="item-grid">
+          <div class="item">
+            <span class="label"><span class="label-icon"></span>추력 (<span data-label="thrust-unit">kgf</span>)</span>
+            <span id="thrust" class="value">--</span>
+          </div>
+
+          <div class="item item-pressure">
+            <span class="label"><span class="label-icon"></span>압력 (V)</span>
+            <div class="value-block"><span id="pressure" class="value">--</span></div>
+          </div>
+
+          <div class="item">
+            <span class="label"><span class="label-icon"></span>스위치</span>
+            <span id="sw" class="pill pill-gray">--</span>
+          </div>
+
+          <div class="item">
+            <span class="label"><span class="label-icon"></span>Igniter</span>
+            <span id="ic" class="pill pill-red">--</span>
+          </div>
+
+          <div class="item">
+            <span class="label"><span class="label-icon"></span>릴레이</span>
+            <span id="relay" class="pill pill-gray">--</span>
+          </div>
+
+          <div class="item">
+            <span class="label"><span class="label-icon"></span>Loop Time</span>
+            <span id="lt" class="value">-- ms</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card-base charts-card">
+        <div class="chart-header">
+          <div class="chart-title-main">THRUST & PRESSURE TREND</div>
+          <div class="chart-controls">
+            <button id="chartZoomOut" class="chart-btn">-</button>
+            <button id="chartZoomIn" class="chart-btn">+</button>
+            <button id="chartLeft" class="chart-btn">◀</button>
+            <button id="chartRight" class="chart-btn">▶</button>
+            <button id="chartLive" class="chart-btn chart-btn-live">LIVE</button>
+          </div>
+        </div>
+
+        <div class="chart-row">
+          <div class="chart-box">
+            <div class="chart-box-header">
+              <div class="chart-title">Thrust</div>
+              <div class="chart-badge" data-badge="thrust-unit">RED · kgf</div>
+            </div>
+            <canvas id="thrustChart"></canvas>
+          </div>
+
+          <div class="chart-box">
+            <div class="chart-box-header">
+              <div class="chart-title">Pressure</div>
+              <div class="chart-badge" data-badge="pressure-unit">BLUE · V</div>
+            </div>
+            <canvas id="pressureChart"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <div class="side-col">
+        <section class="log-card">
+          <div class="log-header"><div class="log-title">EVENT LOG</div></div>
+          <div class="terminal-shell">
+            <div class="terminal-header"><div class="term-title">hanwool-tms@board: ~</div></div>
+            <div id="logView"></div>
+          </div>
+        </section>
+
+        <section class="card-base controls-card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">CONTROL PANEL</div>
+            </div>
+            <div class="controls-header-actions">
+              <button id="controlsSettingsBtn" class="controls-gear-btn" title="Settings">⚙</button>
+            </div>
+          </div>
+
+          <div class="controls-grid">
+            <div class="controls-section-label">데이터</div>
+            <div class="controls-toolbar">
+              <button id="copyLogBtn" class="toolbar-btn">Copy Log</button>
+              <button id="exportCsvBtn" class="toolbar-btn">Export CSV</button>
+            </div>
+
+            <div class="controls-section-label">시퀀스 제어</div>
+            <div class="controls-main-row">
+              <div class="primary-btn-wrap"><button id="igniteBtn" class="primary-btn">SEQUENCE START</button></div>
+              <div class="abort-btn-wrap"><button id="abortBtn" class="secondary-btn" disabled>ABORT</button></div>
+            </div>
+
+            <button id="forceIgniteBtn" class="force-btn">강제 점화</button>
+
+            <div class="controls-section-label">컨트롤</div>
+            <div class="control-row">
+              <div class="control-tile">
+                <div>
+                  <div class="control-tile-label">WebSerial</div>
+                  <div class="control-tile-sub">시리얼 연결</div>
+                </div>
+                <div class="control-tile-actions">
+                  <label class="switch" title="WebSerial">
+                    <input type="checkbox" id="serialToggle">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div id="inspectionOpenBtn" class="control-tile is-btn" role="button" tabindex="0">
+                <div>
+                  <div class="control-tile-label">설비 점검</div>
+                </div>
+                <div class="control-tile-actions">
+                  <span id="inspectionStatusPill" class="pill pill-gray">대기</span>
+                </div>
+              </div>
+
+              <div id="launcherOpenBtn" class="control-tile is-btn" role="button" tabindex="0">
+                <div>
+                  <div class="control-tile-label">발사대</div>
+                  <div class="control-tile-sub">발사대 모터/액츄에이터제어</div>
+                </div>
+                <div class="control-tile-actions">
+                  <span class="pill pill-gray">OPEN</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- 설정 -->
+    <div id="settingsOverlay" class="settings-overlay hidden">
+      <div class="settings-dialog">
+        <div class="settings-header">
+          <div class="settings-title">CONTROL SETTINGS</div>
+          <button id="settingsClose" class="settings-close-btn">×</button>
+        </div>
+
+        <div class="settings-body">
+          <nav class="settings-nav">
+            <div class="settings-nav-title">섹션</div>
+            <button class="settings-nav-btn active" data-target="connect"><span>연결</span><span class="settings-nav-badge">Connect</span></button>
+            <button class="settings-nav-btn" data-target="units"><span>단위</span><span class="settings-nav-badge">Units</span></button>
+            <button class="settings-nav-btn" data-target="sequence"><span>시퀀스</span><span class="settings-nav-badge">Sequence</span></button>
+            <button class="settings-nav-btn" data-target="safety"><span>SAFETY</span><span class="settings-nav-badge">Safety</span></button>
+            <button class="settings-nav-btn" data-target="fw"><span>정보</span><span class="settings-nav-badge">Info</span></button>
+          </nav>
+
+          <div class="settings-panels">
+            <!-- CONNECT -->
+            <div class="settings-panel active" data-panel="connect">
+              <div class="settings-group">
+                <div class="settings-group-title">연결 모드</div>
+
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">시리얼 연결 상태</div>
+                  </div>
+                  <div id="serialStatus" class="serial-pill">
+                    <span class="dot"></span><span class="mono" id="serialStatusText">DISCONNECTED</span>
+                  </div>
+                </div>
+
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">시리얼 수신 로그 반영</div>
+                    <div class="hint-mini">보드가 JSON 라인을 출력하면 그대로 파싱해 UI/차트에 반영합니다.</div>
+                  </div>
+                  <label class="switch" title="Serial RX">
+                    <input type="checkbox" id="serialRxToggle" checked>
+                    <span class="slider"></span>
+                  </label>
+                </div>
+
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">시리얼 명령 전송</div>
+                    <div class="hint-mini">ON이면 /set?… 같은 HTTP 명령을 시리얼 “SET …” 라인으로도 전송합니다.</div>
+                  </div>
+                  <label class="switch" title="Serial TX">
+                    <input type="checkbox" id="serialTxToggle" checked>
+                    <span class="slider"></span>
+                  </label>
+                </div>
+
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">폴링 유지</div>
+                    <div class="hint-mini">Wi-Fi 연결이 없어도 UI가 멈추지 않도록 폴링은 계속 시도합니다.</div>
+                  </div>
+                  <span class="settings-desc mono">fetch /data</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- UNITS -->
+            <div class="settings-panel" data-panel="units">
+              <div class="settings-group">
+                <div class="settings-group-title">단위 설정</div>
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">추력 단위</div>
+                    <div class="hint-mini">표시 단위만 변환됩니다. 저장 데이터(RAW)는 <strong>kgf 기준</strong>입니다.</div>
+                  </div>
+                  <select id="unitThrust" class="settings-select">
+                    <option value="kgf">kgf</option>
+                    <option value="N">N</option>
+                  </select>
+                </div>
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">압력 단위</div>
+                    <div class="hint-mini">현재는 Voltage(V) 기준. 센서 보정이 들어가면 kPa/psi로 확장 가능합니다.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SEQUENCE -->
+            <div class="settings-panel" data-panel="sequence">
+              <div class="settings-group">
+                <div class="settings-group-title">점화 시퀀스</div>
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">점화 시간 (릴레이 ON)</div>
+                    <div class="hint-mini">보드에 <span class="mono">/set?ign_ms=...</span> 전송. 과열/인가 시간에 주의.</div>
+                  </div>
+                  <div class="settings-number-wrap">
+                    <input id="ignTimeInput" type="number" min="1" max="10" step="1" class="settings-number">
+                    <div class="settings-desc">1~10초</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-group">
+                <div class="settings-group-title">카운트다운</div>
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">카운트다운 시간</div>
+                    <div class="hint-mini">보드에 <span class="mono">/set?cd_ms=...</span> 전송. 인원 통제 시간을 충분히 확보.</div>
+                  </div>
+                  <div class="settings-number-wrap">
+                    <input id="countdownSecInput" type="number" min="3" max="30" step="1" class="settings-number">
+                    <div class="settings-desc">3~30초</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SAFETY -->
+            <div class="settings-panel" data-panel="safety">
+              <div class="settings-group">
+                <div class="settings-group-title">SAFETY</div>
+
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">RelaySafe (LOCKOUT)</div>
+                    <div class="hint-mini">릴레이가 <strong>비정상</strong>일때 모든 제어권한 정지</strong> + 재시작 후 제어 권한 반환</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="relaySafeToggle" checked>
+                    <span class="slider"></span>
+                  </label>
+                </div>
+
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">Igniter Safety Test (IGS)</div>
+                    <div class="hint-mini">이그나이터의 결선 확인/테스트</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="igswitch">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+
+                <div class="settings-row">
+                  <div>
+                    <div class="settings-label">안전 알림</div>
+                    <div class="hint-mini">각종 상태 변화 시 토스트 알림이 표시됩니다. 클릭하면 닫힙니다.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- FW -->
+            <div class="settings-panel" data-panel="fw">
+              <div class="settings-group">
+                <!-- ✅ 여기: "소프트웨어" 설정 안에 작은 F 로고 -->
+                <div class="fw-head">
+                  <img class="fw-f-logo" src="img/Flash_logo.png" alt="F">
+                </div>
+                <div class="settings-group-title" style="margin:0;">HANWOOL FLASH6</div>
+
+                <div class="settings-row"><div class="settings-label"><br>Program</div><div class="settings-desc" style="text-align:left;"><br>FLASH</div></div>
+                <div class="settings-row"><div class="settings-label">Build ID</div><div class="settings-desc">v6 · B0</div></div>
+                <div class="settings-row"><div class="settings-label">Protocol</div><div class="settings-desc">FLASH JSON v1.0</div></div>
+                <div class="settings-row">
+                  <div class="settings-desc" style="text-align:left;">
+                    Copyright (c) 2026 ALTIS - YBB<br>
+                    Permission is hereby granted, free of charge, to any person obtaining a copy
+                    of this software and associated documentation files (the “Software”), to deal
+                    in the Software without restriction, including without limitation the rights
+                    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+                    copies of the Software, and to permit persons to whom the Software is furnished
+                    to do so, subject to the following conditions:<br>
+                    • THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="settings-footer"><button id="settingsSave" class="settings-save-btn">저장</button></div>
+      </div>
+    </div>
+
+    <!-- 시퀀스 스타트 롱프레스 모달 -->
+    <div id="confirmOverlay" class="confirm-overlay hidden" style="display:none;">
+      <div class="confirm-dialog">
+        <div class="confirm-icon"><img src="img/Danger.svg" alt="warning"></div>
+        <div class="confirm-title">점화 시퀀스를 진행할까요?</div>
+        <div class="confirm-text">
+          점화 조건이 충족되지 않으면 보드가 점화를 실행하지 않습니다.<br>
+          버튼을 3초 동안 계속 누르고 있어야 카운트다운이 진행됩니다.
+        </div>
+        <div class="confirm-note">• 주변 안전거리 확보 · 이그나이터 결선/단락 여부 반드시 확인!</div>
+        <div class="confirm-actions">
+          <div class="longpress-wrap">
+            <button id="longPressBtn" class="longpress-btn">
+              <span>HOLD<br>TO START</span>
+              <div class="longpress-ring"><div class="longpress-spinner"></div></div>
+            </button>
+          </div>
+          <button id="confirmCancel" class="confirm-cancel">취소</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 강제 점화 모달 -->
+    <div id="forceOverlay" class="confirm-overlay hidden" style="display:none;">
+      <div class="confirm-dialog">
+        <div class="confirm-icon"><img src="img/Danger.svg" alt="warning"></div>
+        <div class="confirm-title">강제 점화를 진행할까요?</div>
+        <div class="confirm-text">
+          강제 점화는 고위험 동작입니다.<br>
+          주변 인원 접근 금지 · 보호구 착용 권장 · 결선/단락 재확인.
+        </div>
+        <div class="force-actions">
+          <button id="forceConfirmYes" class="force-danger-small">강제 점화</button>
+          <button id="forceConfirmCancel" class="force-cancel-big">취소</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ✅ LOCKOUT 모달 -->
+    <div id="lockoutOverlay" class="confirm-overlay hidden" style="display:none;">
+      <div class="confirm-dialog lockout-dialog">
+        <button id="lockoutClose" class="settings-close-btn lockout-close" aria-label="close">×</button>
+
+        <div class="lockout-figure">
+          <img id="lockoutImg" class="lockout-img" src="" alt="RelaySafe Lockout">
+        </div>
+
+        <div class="confirm-title" id="lockoutTitle">LOCKOUT</div>
+        <div class="confirm-text" id="lockoutText">
+          비정상적인 릴레이 HIGH 감지로 모든 제어 권한이 해제되었습니다.
+        </div>
+        <div class="confirm-note" id="lockoutNote">
+          • 릴레이/배선/드라이버 쇼트 여부 확인 후 <strong>보드를 재시작</strong>하세요.
+        </div>
+
+        <div class="confirm-actions">
+          <button id="lockoutAck" class="force-danger-small">확인</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 발사대 모달 -->
+    <div id="launcherOverlay" class="settings-overlay hidden">
+      <div class="launcher-dialog">
+        <div class="launcher-header">
+          <div class="launcher-title">LAUNCHER CONTROL</div>
+          <button id="launcherClose" class="launcher-close-btn">×</button>
+        </div>
+        <div class="launcher-note">
+          발사대 모터/액추에이터와 연결된 후 실제 높이 제어가 적용됩니다.<br>
+          현재는 UI 수준의 제어 모킹입니다.
+        </div>
+        <div class="launcher-controls">
+          <div class="launcher-arrow-row">
+            <button id="launcherUpModalBtn" class="launcher-arrow-btn">▲</button>
+            <button id="launcherDownModalBtn" class="launcher-arrow-btn">▼</button>
+            <div class="launcher-hint">버튼을 누르고 있는 동안 제어 명령이 반복됩니다 (현재는 로그만 기록).</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 설비 점검 모달 -->
+    <div id="inspectionOverlay" class="settings-overlay hidden" style="display:none;">
+      <div class="inspection-dialog">
+        <div class="inspection-header">
+          <div>
+            <div class="inspection-title">설비 점검</div>
+            <div class="inspection-sub">자동 점검을 완료하면 제어 권한이 부여됩니다.</div>
+          </div>
+          <button id="inspectionClose" class="inspection-close-btn" aria-label="close">×</button>
+        </div>
+
+        <div class="inspection-list">
+          <div class="inspection-item" data-key="link">
+            <div class="inspection-left">
+              <span class="inspection-dot"></span>
+              <div>
+                <div class="inspection-label">데이터 링크</div>
+                <div class="inspection-desc">Wi-Fi/폴링 응답 상태</div>
+              </div>
+            </div>
+            <div class="inspection-status">대기</div>
+          </div>
+          <div class="inspection-item" data-key="serial">
+            <div class="inspection-left">
+              <span class="inspection-dot"></span>
+              <div>
+                <div class="inspection-label">WebSerial</div>
+                <div class="inspection-desc">USB 시리얼 연결/권한</div>
+              </div>
+            </div>
+            <div class="inspection-status">대기</div>
+          </div>
+          <div class="inspection-item" data-key="igniter">
+            <div class="inspection-left">
+              <span class="inspection-dot"></span>
+              <div>
+                <div class="inspection-label">이그나이터</div>
+                <div class="inspection-desc">연속성/오픈 여부</div>
+              </div>
+            </div>
+            <div class="inspection-status">대기</div>
+          </div>
+          <div class="inspection-item" data-key="switch">
+            <div class="inspection-left">
+              <span class="inspection-dot"></span>
+              <div>
+                <div class="inspection-label">스위치</div>
+                <div class="inspection-desc">저전위(LOW) 안전 상태</div>
+              </div>
+            </div>
+            <div class="inspection-status">대기</div>
+          </div>
+          <div class="inspection-item" data-key="relay">
+            <div class="inspection-left">
+              <span class="inspection-dot"></span>
+              <div>
+                <div class="inspection-label">RelaySafe/LOCKOUT</div>
+                <div class="inspection-desc">비정상 릴레이 HIGH 여부</div>
+              </div>
+            </div>
+            <div class="inspection-status">대기</div>
+          </div>
+        </div>
+
+        <div class="inspection-footer">
+          <div id="inspectionResult" class="inspection-result">점검 대기중…</div>
+          <div class="inspection-actions">
+            <button id="inspectionRetry" class="toolbar-btn">다시 점검</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer-nav"><div class="footer-meta">2026 ALTIS 추진팀 윤보배 - HANWOOL</div></footer>
+  </div>
+
+  <script src="dashboard.js"></script>
+
+</body>
+</html>
