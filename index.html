@@ -532,9 +532,11 @@
     .inspection-item.state-running .inspection-dot{background:#f59e0b;box-shadow:0 0 0 5px rgba(245,158,11,0.22)}
     .inspection-item.state-ok .inspection-dot{background:var(--ok);box-shadow:0 0 0 5px var(--ok-soft)}
     .inspection-item.state-bad .inspection-dot{background:var(--danger);box-shadow:0 0 0 5px var(--danger-soft)}
+    .inspection-item.state-skip .inspection-dot{background:#f59e0b !important;box-shadow:0 0 0 5px rgba(245,158,11,0.22) !important}
     .inspection-item.state-running .inspection-status{color:#f59e0b}
     .inspection-item.state-ok .inspection-status{color:#166534}
     .inspection-item.state-bad .inspection-status{color:#b91c1c}
+    .inspection-item.state-skip .inspection-status{color:#f59e0b !important}
     .inspection-footer{margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px}
     .inspection-result{font-size:12px;font-weight:600;color:#475569}
     .inspection-result.ok{color:#166534}
@@ -641,7 +643,7 @@
       .log-card{order:4}
     }
     @media(min-width:768px){
-      .shell{display:grid;grid-template-columns:minmax(0,2.8fr) minmax(320px,1fr);grid-template-areas:"main side" "charts side";gap:14px}
+      .shell{display:grid;grid-template-columns:minmax(0,2.8fr) minmax(320px,1fr);grid-template-areas:"main side" "charts side";gap:14px;align-items:start}
       .main-card{grid-area:main}
       .charts-card{grid-area:charts;min-height:220px}
       .side-col{grid-area:side}
@@ -650,8 +652,9 @@
     @media(min-width:1100px){.shell{grid-template-columns:minmax(0,2.8fr) minmax(340px,1fr)}}
     @media(max-width:600px){
       body{padding:10px}
-      .top-bar{flex-direction:column;align-items:stretch;gap:8px}
-      .top-right{justify-content:flex-start}
+      .top-bar{flex-direction:column-reverse;align-items:stretch;gap:6px}
+      .top-left{width:100%}
+      .top-right{justify-content:flex-end;align-self:flex-end;width:100%}
       .logo-img{height:40px}
       .title-main{font-size:16px}
       .title-sub{font-size:11px}
@@ -791,10 +794,6 @@
           <div class="chip-value" id="conn-text">DISCONNECTED</div>
         </div>
         <div class="chip">
-          <div class="chip-label">Wi-Fi</div>
-          <div class="chip-value">192.168.4.1</div>
-        </div>
-        <div class="chip">
           <div class="chip-label">KST</div>
           <div class="chip-value" id="kst-time">--:--:--</div>
         </div>
@@ -822,17 +821,13 @@
 
           <div class="pill-row">
             <div class="pill">
-              <strong>Snap</strong>
-              <span id="loop-pill">-- ms</span>
-              <span class="pill-sep">·</span>
+              <strong>WS</strong>
               <span id="snap-hz">-- Hz</span>
             </div>
 
             <div class="pill">
               <strong>HX711</strong>
               <span id="hx-hz">-- Hz</span>
-              <span class="pill-sep">·</span>
-              <span id="cpu-us">-- us</span>
             </div>
 
             <div class="pill"><strong>Mode</strong> <span id="mode-pill">-</span></div>
@@ -936,7 +931,7 @@
             <div class="controls-section-label">데이터</div>
             <div class="controls-toolbar">
               <button id="copyLogBtn" class="toolbar-btn">Copy Log</button>
-              <button id="exportCsvBtn" class="toolbar-btn">Export CSV</button>
+              <button id="exportCsvBtn" class="toolbar-btn" data-i18n="exportXlsx">Export XLSX</button>
             </div>
 
             <div class="controls-section-label">시퀀스 제어</div>
@@ -998,7 +993,7 @@
           <nav class="settings-nav">
             <div class="settings-nav-title">섹션</div>
             <button class="settings-nav-btn active" data-target="connect"><span>연결</span><span class="settings-nav-badge">Connect</span></button>
-            <button class="settings-nav-btn" data-target="units"><span>단위</span><span class="settings-nav-badge">Units</span></button>
+            <button class="settings-nav-btn" data-target="units"><span>인터페이스</span><span class="settings-nav-badge">Interface</span></button>
             <button class="settings-nav-btn" data-target="sequence"><span>시퀀스</span><span class="settings-nav-badge">Sequence</span></button>
             <button class="settings-nav-btn" data-target="safety"><span>SAFETY</span><span class="settings-nav-badge">Safety</span></button>
             <button class="settings-nav-btn" data-target="fw"><span>정보</span><span class="settings-nav-badge">Info</span></button>
@@ -1054,7 +1049,7 @@
             <!-- UNITS -->
             <div class="settings-panel" data-panel="units">
               <div class="settings-group">
-                <div class="settings-group-title">단위 설정</div>
+                <div class="settings-group-title">인터페이스 설정</div>
                 <div class="settings-row">
                   <div>
                     <div class="settings-label">추력 단위</div>
@@ -1065,14 +1060,25 @@
                     <option value="N">N</option>
                   </select>
                 </div>
-                <div class="settings-row">
-                  <div>
-                    <div class="settings-label">압력 단위</div>
-                    <div class="hint-mini">현재는 Voltage(V) 기준. 센서 보정이 들어가면 kPa/psi로 확장 가능합니다.</div>
-                  </div>
-                </div>
+            <div class="settings-row">
+              <div>
+                <div class="settings-label">압력 단위</div>
+                <div class="hint-mini">현재는 Voltage(V) 기준. 센서 보정이 들어가면 kPa/psi로 확장 가능합니다.</div>
               </div>
             </div>
+
+            <div class="settings-row">
+              <div>
+                <div class="settings-label" data-i18n="settingsLangLabel">언어</div>
+                <div class="hint-mini" data-i18n="settingsLangHint">표시 언어를 변경합니다.</div>
+              </div>
+              <select id="langSelect" class="settings-select">
+                <option value="ko">한국어</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+          </div>
+        </div>
 
             <!-- SEQUENCE -->
             <div class="settings-panel" data-panel="sequence">
