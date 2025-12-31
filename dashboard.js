@@ -35,11 +35,17 @@
     let disconnectedLogged = false;
     let lastStatusCode = -1;
     let currentSt = 0;
+    let lastSnapHzUiMs = 0;
+    let rxWindowStartMs = 0;
+    let rxWindowCount = 0;
+    let rxHzWindow = 0;
 
     let prevSwState = null;
     let prevIcState = null;
     let prevGsState = null;
     let st2StartMs = null;
+    let igniterAbortSent = false;
+    let firstSampleMs = null;
 
     // ✅ RelaySafe/LOCKOUT
     let relaySafeEnabled = true;
@@ -69,7 +75,7 @@
     const INSPECTION_STEPS = [
       {key:"link",    check:()=>connOk},
       {key:"serial",  check:()=>(!serialEnabled) || serialConnected},
-      {key:"igniter", check:()=>latestTelemetry.ic===1},
+      {key:"igniter", check:()=> (uiSettings && uiSettings.igs) ? (latestTelemetry.ic===1) : true},
       {key:"switch",  check:()=>latestTelemetry.sw===0},
       {key:"relay",   check:()=>!lockoutLatched},
     ];
@@ -91,6 +97,15 @@
     // ✅ 엔드포인트 “기억” (매번 3개 다 두드리지 않게)
     let preferredEndpoint = "/graphic_data";
     const ENDPOINTS = ["/graphic_data","/data","/json"];
+
+    // ✅ WebSocket 스트림
+    let wsSocket = null;
+    let wsConnected = false;
+    let wsRetryTimer = null;
+    let wsRetryMs = 300;
+    let wsLastMsgMs = 0;
+    const WS_FRESH_MS = 300;
+    const WS_RETRY_MAX_MS = 5000;
 
     // =====================
     // ✅ SPLASH / PRELOAD
@@ -176,7 +191,8 @@
         igs: 0,
         serialEnabled: false,
         serialRx: true,
-        serialTx: true
+        serialTx: true,
+        lang: "ko"
       };
     }
     function loadSettings(){
@@ -193,8 +209,411 @@
 
       serialRxEnabled = uiSettings.serialRx !== false;
       serialTxEnabled = uiSettings.serialTx !== false;
+      setLanguage(uiSettings.lang || "ko");
     }
     function saveSettings(){ try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(uiSettings)); }catch(e){} }
+
+    // =====================
+    // 언어 (i18n)
+    // =====================
+    const I18N = {
+      ko: {
+        toastTitleSuccess:"완료",
+        toastTitleWarn:"주의",
+        toastTitleError:"오류",
+        toastTitleIgnite:"점화 / 추력 감지",
+        toastTitleInfo:"알림",
+        safetyLineSuffix:"안전거리 확보 · 결선/단락 확인 · 주변 인원 접근 금지.",
+        settingsLangLabel:"언어",
+        settingsLangHint:"표시 언어를 변경합니다.",
+        exportXlsx:"XLSX 내보내기",
+        chartNoData:"데이터 없음",
+        labelDelay:"지연",
+        labelBurn:"연소",
+        modeSerial:"시리얼",
+        modeWifi:"와이파이",
+        modeAuto:"자동",
+        swHigh:"HIGH",
+        swLow:"LOW",
+        icOk:"OK",
+        icNo:"NO",
+        relayOn:"ON",
+        relayOff:"OFF",
+        dirUp:"상승",
+        dirDown:"하강",
+        confirmTitleReady:"점화 시퀀스를 진행할까요?",
+        confirmTitleEntering:"점화 시퀀스 진입까지 {sec}초",
+        confirmTitleCountdown:"카운트다운 시작",
+        ignWindowDetected:"점화 구간 감지",
+        ignWindowNone:"점화 구간 없음",
+        igniterLostAbortLog:"시퀀스 중 이그나이터 끊김 감지 → ABORT 전송.",
+        igniterLostAbortToast:"시퀀스 중 이그나이터가 끊겼습니다. ABORT 처리했습니다. {safety}",
+        lockoutModalTitle:"LOCKOUT · {name}",
+        lockoutModalText:"비정상적인 릴레이 HIGH 감지 ({name})로 모든 제어 권한이 해제되었습니다.",
+        lockoutModalNote:"• 릴레이/배선/드라이버 쇼트 여부 확인 후 보드를 재시작하세요.",
+        connConnected:"연결됨",
+        connDisconnected:"연결 끊김",
+        statusDisconnected:"DISCONNECTED",
+        statusNoResponse:"보드 응답 없음",
+        wsTimeout:"WebSocket 시간초과",
+        noResponse:"보드 응답 없음",
+        hdrTimeIso:"시간_ISO",
+        hdrMessage:"메시지",
+        hdrIgnWindow:"점화_구간",
+        hdrIgnDelay:"점화_지연_s",
+        hdrBurn:"유효_연소_s",
+        hdrThreshold:"임계_kgf",
+        hdrTag:"태그",
+        hdrThrust:"추력_kgf",
+        hdrPressure:"압력_v",
+        hdrLoopMs:"루프_ms",
+        hdrElapsedMs:"경과_ms",
+        hdrHxHz:"hx_hz",
+        hdrCpuUs:"cpu_us",
+        hdrSwitch:"스위치",
+        hdrIgnOk:"점화_정상",
+        hdrRelay:"릴레이",
+        hdrIgs:"igs_모드",
+        hdrState:"상태",
+        hdrCdMs:"카운트다운_ms",
+        hdrRelTime:"상대시간_s",
+        hdrIgnWindowFlag:"유효추력_구간",
+        chartTitleIgnition:"유효추력 구간 추력/압력 (elapsed_ms 기준)",
+        chartTitleThrust:"추력 그래프 (유효추력 구간)",
+        chartTitlePressure:"압력 그래프 (유효추력 구간)",
+        statusLockout:"LOCKOUT",
+        statusAbort:"ABORT",
+        statusIgnition:"IGNITION",
+        statusCountdown:"COUNTDOWN",
+        statusNotArmed:"NOT ARMED",
+        statusReady:"READY",
+        statusLockoutText:"비정상적인 릴레이 HIGH 감지 ({name}). 모든 제어 권한이 해제되었습니다. 보드를 재시작하세요.",
+        statusAbortText:"시퀀스가 중단되었습니다.",
+        statusIgnitionText:"점화 중입니다.",
+        statusCountdownText:"카운트다운 진행 중",
+        statusNotArmedText:"이그나이터 미연결 / 준비 안됨",
+        statusReadyText:"시스템 준비 완료",
+        relaySafeLockout:"LOCKOUT({name})",
+        relaySafeSafe:"SAFE",
+        relaySafeOff:"OFF",
+        serialOff:"OFF",
+        serialConnected:"연결됨",
+        serialDisconnected:"연결 끊김",
+        inspectFailToast:"점검 실패 항목이 있습니다. 상태를 확인하세요.",
+        inspectFailLog:"설비 점검 실패: 일부 항목이 통과하지 못했습니다.",
+        inspectPassToast:"설비 점검 통과. 제어 권한을 획득했습니다.",
+        inspectPassLog:"설비 점검 완료. 제어 권한을 획득했습니다.",
+        wsReconnect:"WebSocket 재연결 예약 ({reason}).",
+        wsConnected:"WebSocket 연결됨: {url}",
+        wsLost:"보드와의 연결이 끊겼습니다.",
+        boardUnstable:"보드 응답이 불안정합니다. 전원/배선/Wi-Fi/폴링 주기를 확인하세요.",
+        webserialUnsupported:"이 브라우저는 WebSerial을 지원하지 않습니다. (Chrome/Edge 권장)",
+        webserialConnected:"WebSerial 연결됨 @460800.",
+        webserialConnectedToast:"시리얼(WebSerial) 연결 완료.",
+        serialReadEnded:"시리얼 읽기 루프 종료: {err}",
+        webserialConnectFailed:"WebSerial 연결 실패: {err}",
+        webserialConnectFailedToast:"시리얼 연결 실패. 포트/권한을 확인하세요.",
+        webserialDisconnected:"WebSerial 연결 해제됨.",
+        serialWriteFailed:"시리얼 쓰기 실패: {err}",
+        linkEstablished:"연결됨 ({src}).",
+        linkEstablishedToast:"보드와 연결되었습니다. ({src})",
+        lockoutDetectedLog:"LOCKOUT: 비정상적인 릴레이 HIGH 감지 ({name}). 제어 권한 해제. 재시작 필요.",
+        lockoutDetectedToast:"비정상적인 릴레이 HIGH 감지 ({name}). 모든 제어 권한이 해제되었습니다. 보드를 재시작하세요.",
+        ignitionSignal:"점화 신호 감지 (st=2). 추력 {thr} kgf 초과 감시 시작.",
+        ignitionThresholdLog:"추력이 {thr} kgf 초과. 점화 지연 = {delay}s",
+        ignitionThresholdToast:"추력이 임계값({thr} kgf) 이상으로 감지되었습니다. 점화 지연 ≈ {delay}s. {safety}",
+        ignitionEndLog:"점화 상태 종료. 연소 시간 ≈ {dur}s",
+        ignitionEndToast:"유효추력 구간이 종료된 것으로 보입니다. 잔열/잔류가스 주의 후 접근하세요.",
+        ignitionNoThrustLog:"점화 상태 종료. 임계값 이상 추력 미검출.",
+        ignitionNoThrustToast:"점화 상태 종료. 유효추력이 감지되지 않았습니다. 결선/이그나이터 상태를 확인하세요. {safety}",
+        switchHighLog:"스위치 변경: HIGH(ON).",
+        switchHighToast:"스위치가 HIGH(ON) 상태입니다. 시퀀스 조건/주변 안전을 재확인하세요. {safety}",
+        switchLowLog:"스위치 변경: LOW(OFF).",
+        switchLowToast:"스위치가 LOW(OFF) 상태입니다. 안전 상태로 유지하세요. {safety}",
+        igniterOkLog:"이그나이터 연속성: OK.",
+        igniterOkToast:"이그나이터 상태가 OK로 변경되었습니다. 점화 전 결선/단락/극성을 재확인하세요. {safety}",
+        igniterNoLog:"이그나이터 연속성: NO / OPEN.",
+        igniterNoToast:"이그나이터가 NO(OPEN) 상태입니다. 커넥터/배선/단선 여부를 확인하세요. {safety}",
+        igsOnLog:"Igniter Safety Test: ON (보드).",
+        igsOnToast:"Igniter Safety Test가 ON입니다. 의도치 않은 인가 위험이 있습니다. {safety}",
+        igsOffLog:"Igniter Safety Test: OFF (보드).",
+        igsOffToast:"Igniter Safety Test가 OFF입니다. 안전 상태로 복귀했습니다. {safety}",
+        countdownStartLog:"카운트다운 시작 (st=1).",
+        countdownStartToast:"카운트다운이 시작되었습니다. 주변 안전거리 확보 후 진행하세요. {safety}",
+        ignitionFiringLog:"점화 진행 (st=2).",
+        ignitionFiringToast:"점화 시퀀스가 진행 중입니다. 절대 접근하지 마세요. {safety}",
+        sequenceCompleteLog:"시퀀스 완료. 대기 상태로 복귀.",
+        sequenceCompleteToast:"시퀀스가 완료되었습니다. 잔열/잔류가스 주의 후 접근하세요.",
+        sequenceAbortedLog:"시퀀스 중단.",
+        sequenceAbortedToast:"ABORT 처리되었습니다. 재시도 전 결선/스위치/환경을 다시 확인하세요. {safety}",
+        notArmedToast:"NOT ARMED 상태입니다. 이그나이터 연결 상태를 확인하세요. {safety}",
+        lockoutDetectedToastShort:"비정상적인 릴레이 HIGH 감지 ({name}). 모든 제어가 정지됩니다. 보드를 재시작하세요.",
+        pollingErrorLog:"폴링 오류: {err}",
+        pollingErrorToast:"폴링 중 오류가 발생했습니다. 로그를 확인하세요.",
+        lockoutNoControl:"LOCKOUT 상태에서는 어떤 제어도 불가능합니다. 보드를 재시작하세요.",
+        inspectionRequiredToast:"설비 점검을 먼저 완료하세요. 점검 통과 후 제어 권한이 부여됩니다.",
+        preSequenceToast:"시퀀스 시작 전 최종 안전 확인을 진행하세요. 3초 롱프레스로 진입합니다. {safety}",
+        inspectionRequiredShort:"설비 점검을 먼저 완료하세요. 제어 권한이 필요합니다.",
+        countdownRequestedLog:"대시보드에서 카운트다운 요청 (롱프레스).",
+        countdownRequestedToast:"카운트다운 요청을 보드에 전송했습니다. 신호/배선/주변을 계속 확인하세요. {safety}",
+        longPressCanceledToast:"롱프레스가 취소되었습니다. 주변 안전 확보 후 다시 시도하세요. {safety}",
+        lockoutForceDenied:"LOCKOUT 상태에서는 강제점화를 포함한 제어가 불가능합니다. 보드를 재시작하세요.",
+        forceNotAllowed:"시퀀스 진행 중에는 강제 점화를 사용할 수 없습니다.",
+        forceWarning:"강제 점화는 고위험 동작입니다. 마지막 확인 후 진행하세요. {safety}",
+        lockoutControlDenied:"LOCKOUT 상태에서는 제어가 불가능합니다.",
+        inspectionRequiredPlain:"설비 점검을 먼저 완료하세요.",
+        launcherUpDownLog:"발사대 {dir} (UI 전용).",
+        lockoutCmdDenied:"LOCKOUT({name}) 상태에서는 명령을 보낼 수 없습니다. 보드를 재시작하세요.",
+        cmdSentLog:"명령 => {cmd}",
+        systemReadyLog:"시스템 준비 완료. 명령 대기 중.",
+        dashboardStartToast:"대시보드가 시작되었습니다. 연결 상태 확인 후 운용하세요. {safety}",
+        relaySafeOnToast:"RelaySafe가 ON입니다. 비정상 릴레이 HIGH 감지 시 LOCKOUT 됩니다.",
+        relaySafeOffToast:"RelaySafe가 OFF입니다. (권장하지 않음)",
+        igsToggledLog:"Igniter Safety Test 토글: {state}",
+        igsToggledOnToast:"Igniter Safety Test가 ON입니다. 이그나이터/배선에 주의하세요. {safety}",
+        igsToggledOffToast:"Igniter Safety Test가 OFF입니다. 안전 상태로 유지하세요. {safety}",
+        serialRxOnToast:"시리얼 수신 파싱 ON",
+        serialRxOffToast:"시리얼 수신 파싱 OFF",
+        serialTxOnToast:"시리얼 명령 전송 ON",
+        serialTxOffToast:"시리얼 명령 전송 OFF",
+        lockoutAbortDenied:"LOCKOUT({name}) 상태에서는 ABORT도 불가능합니다. 보드를 재시작하세요.",
+        abortRequestedToast:"ABORT 요청을 보드에 전송했습니다. 안전 확인 후 재시도하세요. {safety}",
+        inspectionOpenToast:"보드와 연결 후 설비 점검을 실행하세요.",
+        inspectionWait:"대기",
+        inspectionRunningLabel:"진행중",
+        inspectionChecking:"확인 중",
+        inspectionOk:"정상",
+        inspectionNeed:"확인 필요",
+        inspectionSkip:"SKIP",
+        inspectionIdleText:"점검 대기중…",
+        inspectionRunningText:"점검 중…",
+        forceRequestedToast:"강제 점화 요청을 보드에 전송했습니다. 절대 접근하지 마세요. {safety}",
+        lockoutAckLog:"LOCKOUT 확인 처리 ({name}). 재시작 필요.",
+        lockoutAckToast:"LOCKOUT({name}) 확인 처리(로그 기록). 보드를 재시작하세요.",
+        logCopiedLog:"로그를 클립보드에 복사했습니다.",
+        logCopiedToast:"로그가 클립보드에 복사되었습니다.",
+        clipboardCopyFailedLog:"클립보드 복사 실패.",
+        clipboardCopyFailedToast:"클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.",
+        copyFailedLog:"복사 실패: {err}",
+        copyFailedToast:"복사에 실패했습니다. 브라우저 정책을 확인하세요.",
+        xlsxExportLog:"XLSX 내보내기 완료 (IGN_SUMMARY/EVENT/RAW): {filename}",
+        xlsxExportToast:"XLSX로 내보냈습니다. (IGN_SUMMARY + EVENT + RAW 시트)",
+        thrustUnitChangedToast:"추력 단위가 {from} → {to} 로 변경되었습니다. 표시 단위만 변경됩니다. {safety}",
+        ignTimeChangedToast:"점화 시간이 {from}s → {to}s 로 변경되었습니다. 과열/인가 시간에 주의하세요. {safety}",
+        countdownChangedToast:"카운트다운 시간이 {from}s → {to}s 로 변경되었습니다. 인원 통제 시간을 충분히 두세요. {safety}",
+        settingsUpdatedLog:"설정 업데이트: thrustUnit={unit}, ignDuration={ign}s, countdown={cd}s"
+      },
+      en: {
+        toastTitleSuccess:"Success",
+        toastTitleWarn:"Warning",
+        toastTitleError:"Error",
+        toastTitleIgnite:"Ignition / Thrust",
+        toastTitleInfo:"Notice",
+        safetyLineSuffix:"Keep safe distance · Check wiring/shorts · No personnel approach.",
+        settingsLangLabel:"Language",
+        settingsLangHint:"Change display language.",
+        exportXlsx:"Export XLSX",
+        chartNoData:"NO DATA",
+        labelDelay:"Delay",
+        labelBurn:"Burn",
+        modeSerial:"SERIAL",
+        modeWifi:"WIFI",
+        modeAuto:"AUTO",
+        swHigh:"HIGH",
+        swLow:"LOW",
+        icOk:"OK",
+        icNo:"NO",
+        relayOn:"ON",
+        relayOff:"OFF",
+        dirUp:"UP",
+        dirDown:"DOWN",
+        confirmTitleReady:"Proceed with ignition sequence?",
+        confirmTitleEntering:"Entering ignition sequence in {sec}s",
+        confirmTitleCountdown:"Countdown start",
+        ignWindowDetected:"Ignition window detected",
+        ignWindowNone:"No ignition window",
+        igniterLostAbortLog:"Igniter lost during sequence → ABORT sent.",
+        igniterLostAbortToast:"Igniter lost during sequence. ABORT sent. {safety}",
+        lockoutModalTitle:"LOCKOUT · {name}",
+        lockoutModalText:"Abnormal relay HIGH detected ({name}). Control revoked.",
+        lockoutModalNote:"• Check relay/wiring/driver short then restart the board.",
+        connConnected:"CONNECTED",
+        connDisconnected:"DISCONNECTED",
+        statusDisconnected:"DISCONNECTED",
+        statusNoResponse:"No response from board",
+        wsTimeout:"WebSocket timeout",
+        noResponse:"No response from board",
+        hdrTimeIso:"time_iso",
+        hdrMessage:"message",
+        hdrIgnWindow:"ignition_window",
+        hdrIgnDelay:"ignition_delay_s",
+        hdrBurn:"effective_burn_s",
+        hdrThreshold:"threshold_kgf",
+        hdrTag:"tag",
+        hdrThrust:"thrust_kgf",
+        hdrPressure:"pressure_v",
+        hdrLoopMs:"loop_ms",
+        hdrElapsedMs:"elapsed_ms",
+        hdrHxHz:"hx_hz",
+        hdrCpuUs:"cpu_us",
+        hdrSwitch:"switch",
+        hdrIgnOk:"ign_ok",
+        hdrRelay:"relay",
+        hdrIgs:"igs_mode",
+        hdrState:"state",
+        hdrCdMs:"cd_ms",
+        hdrRelTime:"rel_time_s",
+        hdrIgnWindowFlag:"is_ignition_window",
+        chartTitleIgnition:"Thrust/Pressure in ignition window (elapsed_ms)",
+        chartTitleThrust:"Thrust chart (ignition window)",
+        chartTitlePressure:"Pressure chart (ignition window)",
+        statusLockout:"LOCKOUT",
+        statusAbort:"ABORT",
+        statusIgnition:"IGNITION",
+        statusCountdown:"COUNTDOWN",
+        statusNotArmed:"NOT ARMED",
+        statusReady:"READY",
+        statusLockoutText:"Abnormal relay HIGH detected ({name}). Control revoked. Restart the board.",
+        statusAbortText:"Sequence aborted.",
+        statusIgnitionText:"Igniter firing.",
+        statusCountdownText:"Launch countdown in progress",
+        statusNotArmedText:"Igniter open / not ready",
+        statusReadyText:"System ready",
+        relaySafeLockout:"LOCKOUT({name})",
+        relaySafeSafe:"SAFE",
+        relaySafeOff:"OFF",
+        serialOff:"OFF",
+        serialConnected:"CONNECTED",
+        serialDisconnected:"DISCONNECTED",
+        inspectFailToast:"Inspection failed. Check the status.",
+        inspectFailLog:"Inspection failed: some items did not pass.",
+        inspectPassToast:"Inspection passed. Control authority acquired.",
+        inspectPassLog:"Inspection complete. Control authority acquired.",
+        wsReconnect:"WebSocket reconnect scheduled ({reason}).",
+        wsConnected:"WebSocket connected: {url}",
+        wsLost:"Dashboard lost connection to board.",
+        boardUnstable:"Board response is unstable. Check power/wiring/Wi-Fi/polling interval.",
+        webserialUnsupported:"This browser does not support WebSerial. (Chrome/Edge recommended)",
+        webserialConnected:"WebSerial connected @460800.",
+        webserialConnectedToast:"Serial (WebSerial) connected.",
+        serialReadEnded:"Serial read loop ended: {err}",
+        webserialConnectFailed:"WebSerial connect failed: {err}",
+        webserialConnectFailedToast:"Serial connect failed. Check port/permissions.",
+        webserialDisconnected:"WebSerial disconnected.",
+        serialWriteFailed:"Serial write failed: {err}",
+        linkEstablished:"Link established ({src}).",
+        linkEstablishedToast:"Connected to board. ({src})",
+        lockoutDetectedLog:"LOCKOUT: abnormal relay HIGH detected ({name}). Control revoked. Restart required.",
+        lockoutDetectedToast:"Abnormal relay HIGH detected ({name}). Control revoked. Restart the board.",
+        ignitionSignal:"Ignition signal detected (st=2). Tracking thrust over {thr} kgf.",
+        ignitionThresholdLog:"Thrust exceeded {thr} kgf. Ignition delay = {delay}s",
+        ignitionThresholdToast:"Thrust exceeded threshold ({thr} kgf). Ignition delay ≈ {delay}s. {safety}",
+        ignitionEndLog:"Ignition state finished. Burn duration ≈ {dur}s",
+        ignitionEndToast:"Effective thrust window ended. Approach after residual heat/gas.",
+        ignitionNoThrustLog:"Ignition state finished. No thrust over threshold detected.",
+        ignitionNoThrustToast:"Ignition ended. No effective thrust detected. Check wiring/igniter. {safety}",
+        switchHighLog:"Switch changed: HIGH (ON).",
+        switchHighToast:"Switch is HIGH (ON). Recheck sequence conditions and safety. {safety}",
+        switchLowLog:"Switch changed: LOW (OFF).",
+        switchLowToast:"Switch is LOW (OFF). Keep safe state. {safety}",
+        igniterOkLog:"Igniter continuity: OK.",
+        igniterOkToast:"Igniter state changed to OK. Recheck wiring/short/polarity before ignition. {safety}",
+        igniterNoLog:"Igniter continuity: NO / OPEN.",
+        igniterNoToast:"Igniter is NO(OPEN). Check connector/wiring/open circuit. {safety}",
+        igsOnLog:"Igniter Safety Test: ON (from board).",
+        igsOnToast:"Igniter Safety Test is ON. Risk of unintended power. {safety}",
+        igsOffLog:"Igniter Safety Test: OFF (from board).",
+        igsOffToast:"Igniter Safety Test is OFF. Returned to safe state. {safety}",
+        countdownStartLog:"Countdown started (st=1).",
+        countdownStartToast:"Countdown started. Maintain safe distance. {safety}",
+        ignitionFiringLog:"Ignition firing (st=2).",
+        ignitionFiringToast:"Ignition sequence in progress. Do not approach. {safety}",
+        sequenceCompleteLog:"Sequence complete. Back to idle.",
+        sequenceCompleteToast:"Sequence complete. Approach after residual heat/gas.",
+        sequenceAbortedLog:"Sequence aborted.",
+        sequenceAbortedToast:"ABORT processed. Recheck wiring/switch/environment before retry. {safety}",
+        notArmedToast:"NOT ARMED. Check igniter connection. {safety}",
+        lockoutDetectedToastShort:"Abnormal relay HIGH detected ({name}). All control stopped. Restart the board.",
+        pollingErrorLog:"Polling error: {err}",
+        pollingErrorToast:"Polling error occurred. Check the log.",
+        lockoutNoControl:"LOCKOUT state: no control allowed. Restart the board.",
+        inspectionRequiredToast:"Complete inspection first. Control authority is granted after pass.",
+        preSequenceToast:"Do final safety check before sequence. Hold 3 seconds to enter. {safety}",
+        inspectionRequiredShort:"Complete inspection first. Control authority required.",
+        countdownRequestedLog:"Countdown requested from dashboard (long-press).",
+        countdownRequestedToast:"Countdown request sent to board. Keep checking signal/wiring/area. {safety}",
+        longPressCanceledToast:"Long-press canceled. Try again after securing safety. {safety}",
+        lockoutForceDenied:"LOCKOUT state: control including force ignition is not allowed. Restart the board.",
+        forceNotAllowed:"Force ignition is not allowed during sequence.",
+        forceWarning:"Force ignition is high risk. Proceed after final check. {safety}",
+        lockoutControlDenied:"LOCKOUT state: control not allowed.",
+        inspectionRequiredPlain:"Complete inspection first.",
+        launcherUpDownLog:"Launcher {dir} (UI only).",
+        lockoutCmdDenied:"LOCKOUT({name}) cannot send command. Restart the board.",
+        cmdSentLog:"CMD => {cmd}",
+        systemReadyLog:"System ready. Waiting for commands.",
+        dashboardStartToast:"Dashboard started. Check connection before operation. {safety}",
+        relaySafeOnToast:"RelaySafe is ON. LOCKOUT on abnormal relay HIGH.",
+        relaySafeOffToast:"RelaySafe is OFF. (Not recommended)",
+        igsToggledLog:"Igniter Safety Test toggled: {state}",
+        igsToggledOnToast:"Igniter Safety Test is ON. Watch igniter/wiring. {safety}",
+        igsToggledOffToast:"Igniter Safety Test is OFF. Keep safe state. {safety}",
+        serialRxOnToast:"Serial RX parsing ON",
+        serialRxOffToast:"Serial RX parsing OFF",
+        serialTxOnToast:"Serial TX ON",
+        serialTxOffToast:"Serial TX OFF",
+        lockoutAbortDenied:"LOCKOUT({name}) cannot ABORT. Restart the board.",
+        abortRequestedToast:"ABORT request sent to board. Recheck safety before retry. {safety}",
+        inspectionOpenToast:"Connect to board before running inspection.",
+        inspectionWait:"Waiting",
+        inspectionRunningLabel:"Running",
+        inspectionChecking:"Checking",
+        inspectionOk:"OK",
+        inspectionNeed:"Check",
+        inspectionSkip:"SKIP",
+        inspectionIdleText:"Inspection ready…",
+        inspectionRunningText:"Inspection running…",
+        forceRequestedToast:"Force ignition request sent to board. Do not approach. {safety}",
+        lockoutAckLog:"LOCKOUT acknowledged ({name}). Restart required.",
+        lockoutAckToast:"LOCKOUT({name}) acknowledged (logged). Restart the board.",
+        logCopiedLog:"Log copied to clipboard.",
+        logCopiedToast:"Log copied to clipboard.",
+        clipboardCopyFailedLog:"Clipboard copy failed.",
+        clipboardCopyFailedToast:"Clipboard copy failed. Check browser permissions.",
+        copyFailedLog:"Copy failed: {err}",
+        copyFailedToast:"Copy failed. Check browser policy.",
+        xlsxExportLog:"XLSX exported (IGN_SUMMARY/EVENT/RAW): {filename}",
+        xlsxExportToast:"Exported to XLSX. (IGN_SUMMARY + EVENT + RAW sheets)",
+        thrustUnitChangedToast:"Thrust unit changed {from} → {to}. Display only. {safety}",
+        ignTimeChangedToast:"Ignition time changed {from}s → {to}s. Watch heating/drive time. {safety}",
+        countdownChangedToast:"Countdown changed {from}s → {to}s. Allow enough clearance time. {safety}",
+        settingsUpdatedLog:"Settings updated: thrustUnit={unit}, ignDuration={ign}s, countdown={cd}s"
+      }
+    };
+
+    let currentLang = "ko";
+    function t(key, vars){
+      const dict = I18N[currentLang] || I18N.ko;
+      let text = dict[key] || I18N.ko[key] || key;
+      if(vars){
+        text = text.replace(/\{(\w+)\}/g, (_, name)=>(
+          (vars[name] !== undefined && vars[name] !== null) ? String(vars[name]) : ""
+        ));
+      }
+      return text;
+    }
+    function setLanguage(lang){
+      currentLang = (lang === "en") ? "en" : "ko";
+      document.documentElement.lang = currentLang;
+      updateStaticTexts();
+    }
+    function updateStaticTexts(){
+      const nodes = document.querySelectorAll("[data-i18n]");
+      nodes.forEach(node=>{
+        const key = node.getAttribute("data-i18n");
+        if(key) node.textContent = t(key);
+      });
+    }
 
     function convertThrustForDisplay(t){
       if(!uiSettings) return t;
@@ -221,9 +640,11 @@
       if(el.serialToggle) el.serialToggle.checked = !!uiSettings.serialEnabled;
       if(el.serialRxToggle) el.serialRxToggle.checked = uiSettings.serialRx !== false;
       if(el.serialTxToggle) el.serialTxToggle.checked = uiSettings.serialTx !== false;
+      if(el.langSelect) el.langSelect.value = (uiSettings.lang === "en") ? "en" : "ko";
 
       updateRelaySafePill();
       updateSerialPill();
+      updateStaticTexts();
     }
     const delay = (ms)=>new Promise(resolve=>setTimeout(resolve, ms));
 
@@ -254,14 +675,12 @@
       const img = lockoutImgSrc(lockoutRelayMask);
 
       if(el.lockoutImg) el.lockoutImg.src = img;
-      if(el.lockoutTitle) el.lockoutTitle.textContent = "LOCKOUT · " + name;
+      if(el.lockoutTitle) el.lockoutTitle.textContent = t("lockoutModalTitle", {name});
       if(el.lockoutText){
-        el.lockoutText.textContent =
-          "비정상적인 릴레이 HIGH 감지 ("+name+")로 모든 제어 권한이 해제되었습니다.";
+        el.lockoutText.textContent = t("lockoutModalText", {name});
       }
       if(el.lockoutNote){
-        el.lockoutNote.innerHTML =
-          "• 릴레이/배선/드라이버 쇼트 여부 확인 후 <strong>보드를 재시작</strong>하세요.";
+        el.lockoutNote.textContent = t("lockoutModalNote");
       }
 
       el.lockoutOverlay.classList.remove("hidden");
@@ -279,8 +698,8 @@
     // =====================
     function updateConnectionUI(connected){
       if(!el.connDot || !el.connText) return;
-      if(connected){ el.connDot.classList.add("ok"); el.connText.textContent="CONNECTED"; }
-      else { el.connDot.classList.remove("ok"); el.connText.textContent="DISCONNECTED"; }
+      if(connected){ el.connDot.classList.add("ok"); el.connText.textContent = t("connConnected"); }
+      else { el.connDot.classList.remove("ok"); el.connText.textContent = t("connDisconnected"); }
       updateInspectionAccess();
     }
 
@@ -330,18 +749,18 @@
 
     function showToast(message, type, opts){
       if(!el.toastContainer) return;
-      const t = type || "info";
+      const toastType = type || "info";
       const duration = (opts && opts.duration) ? opts.duration : 5200;
 
       const toast = document.createElement("div");
-      toast.className = "toast toast-" + t;
+      toast.className = "toast toast-" + toastType;
       toast.setAttribute("role","status");
       toast.setAttribute("aria-live","polite");
 
       const iconDiv = document.createElement("div");
       iconDiv.className = "toast-icon";
       const img = document.createElement("img");
-      img.src = getToastIconPath(t);
+      img.src = getToastIconPath(toastType);
       img.alt = "";
       iconDiv.appendChild(img);
 
@@ -350,11 +769,11 @@
 
       const titleDiv = document.createElement("div");
       titleDiv.className = "toast-title";
-      if(t==="success") titleDiv.textContent="완료";
-      else if(t==="warn") titleDiv.textContent="주의";
-      else if(t==="error") titleDiv.textContent="오류";
-      else if(t==="ignite") titleDiv.textContent="점화 / 추력 감지";
-      else titleDiv.textContent="알림";
+      if(toastType==="success") titleDiv.textContent = t("toastTitleSuccess");
+      else if(toastType==="warn") titleDiv.textContent = t("toastTitleWarn");
+      else if(toastType==="error") titleDiv.textContent = t("toastTitleError");
+      else if(toastType==="ignite") titleDiv.textContent = t("toastTitleIgnite");
+      else titleDiv.textContent = t("toastTitleInfo");
 
       const textDiv = document.createElement("div");
       textDiv.className = "toast-text";
@@ -373,7 +792,7 @@
     }
 
     function safetyLineSuffix(){
-      return "안전거리 확보 · 결선/단락 확인 · 주변 인원 접근 금지.";
+      return t("safetyLineSuffix");
     }
 
     function updateRelaySafePill(){
@@ -382,10 +801,10 @@
 
       if(lockoutLatched){
         const name = relayMaskName(lockoutRelayMask);
-        el.relaySafePill.textContent = "LOCKOUT(" + name + ")";
+        el.relaySafePill.textContent = t("relaySafeLockout", {name});
         el.relaySafePill.style.color = "#991b1b";
       }else{
-        el.relaySafePill.textContent = relaySafeEnabled ? "SAFE" : "OFF";
+        el.relaySafePill.textContent = relaySafeEnabled ? t("relaySafeSafe") : t("relaySafeOff");
         el.relaySafePill.style.color = relaySafeEnabled ? "#166534" : "#64748b";
       }
     }
@@ -396,13 +815,13 @@
       const ok = enabled && serialConnected;
       el.serialStatus.classList.remove("ok","bad");
       if(!enabled){
-        el.serialStatusText.textContent = "OFF";
+        el.serialStatusText.textContent = t("serialOff");
       }else if(ok){
         el.serialStatus.classList.add("ok");
-        el.serialStatusText.textContent = "CONNECTED";
+        el.serialStatusText.textContent = t("serialConnected");
       }else{
         el.serialStatus.classList.add("bad");
-        el.serialStatusText.textContent = "DISCONNECTED";
+        el.serialStatusText.textContent = t("serialDisconnected");
       }
     }
 
@@ -448,13 +867,14 @@
     function setInspectionItemState(key,state,label){
       const item=document.querySelector('.inspection-item[data-key="'+key+'"]');
       if(!item) return;
-      item.classList.remove("state-running","state-ok","state-bad");
+      item.classList.remove("state-running","state-ok","state-bad","state-skip");
       if(state==="running") item.classList.add("state-running");
       else if(state==="ok") item.classList.add("state-ok");
       else if(state==="bad") item.classList.add("state-bad");
+      else if(state==="skip") item.classList.add("state-skip");
       const status=item.querySelector(".inspection-status");
       if(status){
-        status.textContent = label || (state==="ok" ? "정상" : state==="bad" ? "확인 필요" : "진행중");
+        status.textContent = label || (state==="ok" ? t("inspectionOk") : state==="bad" ? t("inspectionNeed") : t("inspectionRunningLabel"));
       }
     }
 
@@ -469,8 +889,8 @@
       inspectionRunning=false;
       controlAuthority=false;
       inspectionState="idle";
-      INSPECTION_STEPS.forEach(s=>setInspectionItemState(s.key,"", "대기"));
-      setInspectionResult("점검 대기중…","neutral");
+      INSPECTION_STEPS.forEach(s=>setInspectionItemState(s.key,"", t("inspectionWait")));
+      setInspectionResult(t("inspectionIdleText"),"neutral");
       updateInspectionPill();
       updateControlAccessUI(currentSt);
     }
@@ -481,17 +901,26 @@
       inspectionState="running";
       controlAuthority=false;
       updateInspectionPill();
-      setInspectionResult("점검 중…","running");
+      setInspectionResult(t("inspectionRunningText"),"running");
       updateControlAccessUI(currentSt);
 
       let hasFail=false;
       for(const step of INSPECTION_STEPS){
-        setInspectionItemState(step.key,"running","확인 중");
+        setInspectionItemState(step.key,"running", t("inspectionChecking"));
         await delay(320);
         let ok=false;
+        let skipped=false;
         try{ ok = !!step.check(); }catch(e){ ok=false; }
-        setInspectionItemState(step.key, ok ? "ok" : "bad", ok ? "정상" : "확인 필요");
-        if(!ok) hasFail=true;
+        if(step.key==="igniter" && !(uiSettings && uiSettings.igs)){
+          ok = true;
+          skipped = true;
+        }
+        if(skipped){
+          setInspectionItemState(step.key, "skip", t("inspectionSkip"));
+        }else{
+          setInspectionItemState(step.key, ok ? "ok" : "bad", ok ? t("inspectionOk") : t("inspectionNeed"));
+        }
+        if(!ok && !skipped) hasFail=true;
         await delay(180);
       }
 
@@ -501,13 +930,13 @@
       if(hasFail){
         controlAuthority=false;
         setInspectionResult("점검 실패 항목이 있습니다.","error");
-        showToast("점검 실패 항목이 있습니다. 상태를 확인하세요.","warn");
-        addLogLine("설비 점검 실패: 일부 항목이 통과하지 못했습니다.","SAFE");
+        showToast(t("inspectFailToast"),"warn");
+        addLogLine(t("inspectFailLog"),"SAFE");
       }else{
         controlAuthority=true;
         setInspectionResult("모든 항목 통과. 제어 권한 확보됨.","ok");
-        showToast("설비 점검 통과. 제어 권한을 획득했습니다.","success");
-        addLogLine("설비 점검 완료. 제어 권한을 획득했습니다.","SAFE");
+        showToast(t("inspectPassToast"),"success");
+        addLogLine(t("inspectPassLog"),"SAFE");
       }
       setButtonsFromState(currentSt, lockoutLatched);
       updateInspectionPill();
@@ -563,13 +992,25 @@
     // =====================
     function ensureCanvasSize(canvas){
       const rect = canvas.getBoundingClientRect();
-      const cssW = Math.max(160, rect.width || (canvas.parentElement?.clientWidth || 200));
+      if(!canvas._cssInit){
+        canvas.style.width = "100%";
+        canvas.style.height = "";
+        canvas._cssInit = true;
+      }
+
+      let parentContentWidth = 0;
+      if(canvas.parentElement){
+        const parentRect = canvas.parentElement.getBoundingClientRect();
+        const parentStyle = getComputedStyle(canvas.parentElement);
+        const padLeft = parseFloat(parentStyle.paddingLeft) || 0;
+        const padRight = parseFloat(parentStyle.paddingRight) || 0;
+        parentContentWidth = Math.max(0, parentRect.width - padLeft - padRight);
+      }
+      const cssW = Math.max(160, Math.floor(parentContentWidth || rect.width || 200));
       const cssH = Math.max(180, rect.height || 220);
       const dpr  = window.devicePixelRatio || 1;
 
       if(canvas._cssW!==cssW || canvas._cssH!==cssH || canvas._dpr!==dpr){
-        canvas.style.width  = cssW + "px";
-        canvas.style.height = cssH + "px";
         canvas.width  = Math.round(cssW * dpr);
         canvas.height = Math.round(cssH * dpr);
         canvas._cssW = cssW; canvas._cssH = cssH; canvas._dpr = dpr;
@@ -611,7 +1052,7 @@
         ctx.font="12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif";
         ctx.textAlign="center";
         ctx.textBaseline="middle";
-        ctx.fillText("NO DATA", width/2, height/2);
+        ctx.fillText(t("chartNoData"), width/2, height/2);
         ctx.restore();
         return;
       }
@@ -699,24 +1140,39 @@
 
       if(lockout){
         el.statusPill.className="status-lock";
-        el.statusPill.textContent="LOCKOUT";
+        el.statusPill.textContent = t("statusLockout");
         const name = relayMaskName(lockoutRelayMask);
-        el.statusText.textContent="비정상적인 릴레이 HIGH 감지 ("+name+"). 모든 제어 권한이 해제되었습니다. 보드를 재시작하세요.";
+        el.statusText.textContent = t("statusLockoutText", {name});
         return 9;
       }
       if(aborted){
-        el.statusPill.className="status-abort"; el.statusPill.textContent="ABORT"; el.statusText.textContent="Sequence aborted"; return 4;
+        el.statusPill.className="status-abort";
+        el.statusPill.textContent = t("statusAbort");
+        el.statusText.textContent = t("statusAbortText");
+        return 4;
       }
       if(st===2){
-        el.statusPill.className="status-fire"; el.statusPill.textContent="IGNITION"; el.statusText.textContent="Igniter firing"; return 2;
+        el.statusPill.className="status-fire";
+        el.statusPill.textContent = t("statusIgnition");
+        el.statusText.textContent = t("statusIgnitionText");
+        return 2;
       }
       if(st===1){
-        el.statusPill.className="status-count"; el.statusPill.textContent="COUNTDOWN"; el.statusText.textContent="Launch countdown in progress"; return 1;
+        el.statusPill.className="status-count";
+        el.statusPill.textContent = t("statusCountdown");
+        el.statusText.textContent = t("statusCountdownText");
+        return 1;
       }
       if(!ignOK){
-        el.statusPill.className="status-disc"; el.statusPill.textContent="NOT ARMED"; el.statusText.textContent="Igniter open / not ready"; return 3;
+        el.statusPill.className="status-disc";
+        el.statusPill.textContent = t("statusNotArmed");
+        el.statusText.textContent = t("statusNotArmedText");
+        return 3;
       }
-      el.statusPill.className="status-ready"; el.statusPill.textContent="READY"; el.statusText.textContent="System ready"; return 0;
+      el.statusPill.className="status-ready";
+      el.statusPill.textContent = t("statusReady");
+      el.statusText.textContent = t("statusReadyText");
+      return 0;
     }
 
     function setButtonsFromState(st, lockout){
@@ -736,6 +1192,66 @@
       if(st===0){ el.igniteBtn.disabled=false; el.abortBtn.disabled=true; }
       else { el.igniteBtn.disabled=true; el.abortBtn.disabled=false; }
       updateControlAccessUI(st);
+    }
+
+    // =====================
+    // 통신: WebSocket 스트림
+    // =====================
+    function getWsUrl(){
+      const proto = (location.protocol === "https:") ? "wss" : "ws";
+      return proto + "://" + location.host + "/ws";
+    }
+
+    function scheduleWsReconnect(reason){
+      if(wsRetryTimer) return;
+      const delay = Math.min(WS_RETRY_MAX_MS, wsRetryMs);
+      wsRetryMs = Math.min(WS_RETRY_MAX_MS, Math.round(wsRetryMs * 1.6 + 80));
+      wsRetryTimer = setTimeout(()=>{ wsRetryTimer = null; openWebSocket(); }, delay);
+
+      if(reason){
+        addLogLine(t("wsReconnect", {reason}), "NET");
+      }
+    }
+
+    function openWebSocket(){
+      const url = getWsUrl();
+      try{
+        wsSocket = new WebSocket(url);
+      }catch(e){
+        scheduleWsReconnect("open failed");
+        return;
+      }
+
+      wsSocket.onopen = ()=>{
+        wsConnected = true;
+        wsRetryMs = 300;
+        addLogLine(t("wsConnected", {url}), "NET");
+      };
+
+      wsSocket.onmessage = (ev)=>{
+        wsLastMsgMs = Date.now();
+        if(!ev || !ev.data) return;
+        try{
+          const obj = JSON.parse(ev.data);
+          onIncomingSample(obj, "WS");
+        }catch(e){}
+      };
+
+      wsSocket.onerror = ()=>{
+        wsConnected = false;
+      };
+
+      wsSocket.onclose = ()=>{
+        wsConnected = false;
+        scheduleWsReconnect("closed");
+      };
+    }
+
+    function ensureWsAlive(){
+      if(wsConnected && (Date.now() - wsLastMsgMs) > DISCONNECT_GRACE_MS){
+        failStreak = FAIL_STREAK_LIMIT;
+        markDisconnectedIfNeeded(t("wsTimeout"));
+      }
     }
 
     // =====================
@@ -781,18 +1297,18 @@
 
         if(el.statusPill && el.statusText && !lockoutLatched){
           el.statusPill.className="status-disc";
-          el.statusPill.textContent="DISCONNECTED";
-          el.statusText.textContent = reason || "No response from board";
+          el.statusPill.textContent = t("statusDisconnected");
+          el.statusText.textContent = reason || t("statusNoResponse");
         }
 
         if(!disconnectedLogged){
-          addLogLine("Dashboard lost connection to board.", "DISC");
+          addLogLine(t("wsLost"), "DISC");
           disconnectedLogged = true;
         }
 
         if(now - lastDiscAnnounceMs > DISC_TOAST_COOLDOWN_MS){
           lastDiscAnnounceMs = now;
-          showToast("보드 응답이 불안정합니다. 전원/배선/Wi-Fi/폴링 주기를 확인하세요.", "warn");
+          showToast(t("boardUnstable"), "warn");
         }
       }
     }
@@ -804,7 +1320,7 @@
 
     async function serialConnect(){
       if(!serialSupported()){
-        showToast("이 브라우저는 WebSerial을 지원하지 않습니다. (Chrome/Edge 권장)", "warn");
+        showToast(t("webserialUnsupported"), "warn");
         return;
       }
       try{
@@ -817,19 +1333,19 @@
         serialConnected = true;
         updateSerialPill();
 
-        addLogLine("WebSerial connected @460800.", "SER");
-        showToast("시리얼(WebSerial) 연결 완료.", "success");
+        addLogLine(t("webserialConnected"), "SER");
+        showToast(t("webserialConnectedToast"), "success");
 
         if(serialReader){
           readSerialLoop().catch(err=>{
-            addLogLine("Serial read loop ended: " + (err?.message||err), "SER");
+            addLogLine(t("serialReadEnded", {err:(err?.message||err)}), "SER");
           });
         }
       }catch(e){
         serialConnected = false;
         updateSerialPill();
-        addLogLine("WebSerial connect failed: " + (e?.message || e), "SER");
-        showToast("시리얼 연결 실패. 포트/권한을 확인하세요.", "error");
+        addLogLine(t("webserialConnectFailed", {err:(e?.message||e)}), "SER");
+        showToast(t("webserialConnectFailedToast"), "error");
       }
     }
 
@@ -842,7 +1358,7 @@
       }finally{
         serialConnected = false;
         updateSerialPill();
-        addLogLine("WebSerial disconnected.", "SER");
+        addLogLine(t("webserialDisconnected"), "SER");
       }
     }
 
@@ -853,7 +1369,7 @@
         await serialWriter.write(data);
         return true;
       }catch(e){
-        addLogLine("Serial write failed: " + (e?.message||e), "SER");
+        addLogLine(t("serialWriteFailed", {err:(e?.message||e)}), "SER");
         return false;
       }
     }
@@ -890,6 +1406,14 @@
     // =====================
     function onIncomingSample(data, srcTag){
       const nowOk = Date.now();
+      if(rxWindowStartMs === 0) rxWindowStartMs = nowOk;
+      rxWindowCount++;
+      const winMs = nowOk - rxWindowStartMs;
+      if(winMs >= 1000){
+        rxHzWindow = Math.round((rxWindowCount * 1000) / winMs);
+        rxWindowStartMs = nowOk;
+        rxWindowCount = 0;
+      }
       lastOkMs = nowOk;
       failStreak = 0;
 
@@ -897,8 +1421,8 @@
         connOk = true;
         disconnectedLogged = false;
         updateConnectionUI(true);
-        addLogLine("Link established (" + srcTag + ").", "NET");
-        showToast("보드와 연결되었습니다. (" + srcTag + ")", "success", {duration:2600});
+        addLogLine(t("linkEstablished", {src:srcTag}), "NET");
+        showToast(t("linkEstablishedToast", {src:srcTag}), "success", {duration:2600});
       }
 
       sampleCounter++;
@@ -906,10 +1430,12 @@
       const nowDate=new Date();
       const timeMs=nowDate.getTime();
       const timeIso=nowDate.toISOString();
+      if(firstSampleMs === null) firstSampleMs = timeMs;
 
-      const t   = Number(data.t  != null ? data.t  : (data.thrust   ?? 0));
+      const thrustVal = Number(data.t  != null ? data.t  : (data.thrust   ?? 0));
       const p   = Number(data.p  != null ? data.p  : (data.pressure ?? 0));
       const lt  = Number(data.lt != null ? data.lt : (data.loop ?? data.loopTime ?? 0));
+      const elapsedMs = Math.max(0, timeMs - firstSampleMs);
 
       const hxHz = Number(data.hz != null ? data.hz : (data.hx_hz ?? 0));
       const ctUs = Number(data.ct != null ? data.ct : (data.cpu_us ?? data.cpu ?? 0));
@@ -933,7 +1459,16 @@
       if(st!==2) st2StartMs=null;
       latestTelemetry = {sw: sw?1:0, ic: ic?1:0, rly: rly?1:0, mode, gs};
 
-      thrustBaseHistory.push(t);
+      if(st===0){
+        igniterAbortSent = false;
+      }else if(st===1 && !ic && !igniterAbortSent){
+        igniterAbortSent = true;
+        sendCommand({http:"/abort", ser:"ABORT"}, true);
+        addLogLine(t("igniterLostAbortLog"), "ABORT");
+        showToast(t("igniterLostAbortToast", {safety:safetyLineSuffix()}), "error");
+      }
+
+      thrustBaseHistory.push(thrustVal);
       pressureBaseHistory.push(p);
 
       const maxKeep=MAX_POINTS*4;
@@ -944,13 +1479,13 @@
         chartView.start=Math.max(0,chartView.start-remove);
       }
 
-      sampleHistory.push({timeMs,timeIso,t,p,lt,hz:hxHz,ct:ctUs,sw:sw?1:0,ic:ic?1:0,r:rly?1:0,st,cd:cd??0});
+      sampleHistory.push({timeMs,timeIso,t:thrustVal,p,lt,elapsed:elapsedMs,hz:hxHz,ct:ctUs,sw:sw?1:0,ic:ic?1:0,r:rly?1:0,st,cd:cd??0});
       if(sampleHistory.length>SAMPLE_HISTORY_MAX){
         const remove=sampleHistory.length-SAMPLE_HISTORY_MAX;
         sampleHistory.splice(0,remove);
       }
 
-      logData.push({time:timeIso,t,p,lt,hz:hxHz,ct:ctUs,s:sw?1:0,ic:ic?1:0,r:rly?1:0,gs,st,cd:cd??0});
+      logData.push({time:timeIso,t:thrustVal,p,lt,elapsed:elapsedMs,hz:hxHz,ct:ctUs,s:sw?1:0,ic:ic?1:0,r:rly?1:0,gs,st,cd:cd??0});
       if(logData.length > RAW_LOG_MAX) logData.splice(0, logData.length - RAW_LOG_MAX);
 
       // ✅ LOCKOUT 반영(보드가 내보내면)
@@ -964,9 +1499,9 @@
           const name = relayMaskName(lockoutRelayMask);
           setLockoutVisual(true);
 
-          addLogLine("LOCKOUT: abnormal relay HIGH detected ("+name+"). Control revoked. Restart required.", "SAFE");
+          addLogLine(t("lockoutDetectedLog", {name}), "SAFE");
           showToast(
-            "비정상적인 릴레이 HIGH 감지 ("+name+"). 모든 제어 권한이 해제되었습니다. 보드를 재시작하세요.",
+            t("lockoutDetectedToast", {name}),
             "error",
             {duration:12000}
           );
@@ -979,15 +1514,15 @@
       // 점화 분석
       if(st===2 && prevStForIgn!==2){
         ignitionAnalysis={hasData:false,ignStartMs:timeMs,thresholdMs:null,lastAboveMs:null,windowStartMs:null,windowEndMs:null,delaySec:null,durationSec:null,endNotified:false};
-        addLogLine("Ignition signal detected (st=2). Tracking thrust over "+IGN_THRUST_THRESHOLD.toFixed(2)+" kgf.","IGN");
+        addLogLine(t("ignitionSignal", {thr:IGN_THRUST_THRESHOLD.toFixed(2)}),"IGN");
       }
 
-      if(ignitionAnalysis.ignStartMs!=null && t>=IGN_THRUST_THRESHOLD){
+      if(ignitionAnalysis.ignStartMs!=null && thrustVal>=IGN_THRUST_THRESHOLD){
         if(ignitionAnalysis.thresholdMs==null){
           ignitionAnalysis.thresholdMs=timeMs;
           ignitionAnalysis.delaySec=(ignitionAnalysis.thresholdMs-ignitionAnalysis.ignStartMs)/1000.0;
-          addLogLine("Thrust exceeded "+IGN_THRUST_THRESHOLD.toFixed(2)+" kgf. Ignition delay = "+ignitionAnalysis.delaySec.toFixed(3)+" s","IGN");
-          showToast("추력이 임계값("+IGN_THRUST_THRESHOLD.toFixed(2)+" kgf) 이상으로 감지되었습니다. 점화 지연 ≈ "+ ignitionAnalysis.delaySec.toFixed(3) + "s. " + safetyLineSuffix(),"ignite");
+          addLogLine(t("ignitionThresholdLog", {thr:IGN_THRUST_THRESHOLD.toFixed(2), delay:ignitionAnalysis.delaySec.toFixed(3)}),"IGN");
+          showToast(t("ignitionThresholdToast", {thr:IGN_THRUST_THRESHOLD.toFixed(2), delay:ignitionAnalysis.delaySec.toFixed(3), safety:safetyLineSuffix()}),"ignite");
         }
         ignitionAnalysis.lastAboveMs=timeMs;
         ignitionAnalysis.durationSec=Math.max(0,(ignitionAnalysis.lastAboveMs-ignitionAnalysis.thresholdMs)/1000.0);
@@ -997,11 +1532,11 @@
       if(prevStForIgn===2 && st!==2 && ignitionAnalysis.ignStartMs!=null && !ignitionAnalysis.endNotified){
         ignitionAnalysis.endNotified=true;
         if(ignitionAnalysis.durationSec!=null){
-          addLogLine("Ignition state finished. Burn duration ≈ "+ignitionAnalysis.durationSec.toFixed(3)+" s","IGN");
-          showToast("유효추력 구간이 종료된 것으로 보입니다. 잔열/잔류가스 주의 후 접근하세요.","info");
+          addLogLine(t("ignitionEndLog", {dur:ignitionAnalysis.durationSec.toFixed(3)}),"IGN");
+          showToast(t("ignitionEndToast"),"info");
         }else{
-          addLogLine("Ignition state finished. No thrust over threshold detected.","IGN");
-          showToast("점화 상태 종료. 유효추력이 감지되지 않았습니다. 결선/이그나이터 상태를 확인하세요. "+safetyLineSuffix(),"warn");
+          addLogLine(t("ignitionNoThrustLog"),"IGN");
+          showToast(t("ignitionNoThrustToast", {safety:safetyLineSuffix()}),"warn");
         }
       }
       prevStForIgn=st;
@@ -1015,11 +1550,11 @@
         else if(prevSwState!==!!sw){
           prevSwState=!!sw;
           if(prevSwState){
-            addLogLine("Switch changed: HIGH (ON).", "SW");
-            showToast("스위치가 HIGH(ON) 상태입니다. 시퀀스 조건/주변 안전을 재확인하세요. "+safetyLineSuffix(),"warn");
+            addLogLine(t("switchHighLog"), "SW");
+            showToast(t("switchHighToast", {safety:safetyLineSuffix()}),"warn");
           }else{
-            addLogLine("Switch changed: LOW (OFF).", "SW");
-            showToast("스위치가 LOW(OFF) 상태입니다. 안전 상태로 유지하세요. "+safetyLineSuffix(),"info");
+            addLogLine(t("switchLowLog"), "SW");
+            showToast(t("switchLowToast", {safety:safetyLineSuffix()}),"info");
           }
         }
 
@@ -1027,11 +1562,11 @@
         else if(prevIcState!==!!ic){
           prevIcState=!!ic;
           if(prevIcState){
-            addLogLine("Igniter continuity: OK.", "IGN");
-            showToast("Igniter 상태가 OK로 변경되었습니다. 점화 전 결선/단락/극성을 재확인하세요. "+safetyLineSuffix(),"success");
+            addLogLine(t("igniterOkLog"), "IGN");
+            showToast(t("igniterOkToast", {safety:safetyLineSuffix()}),"success");
           }else{
-            addLogLine("Igniter continuity: NO / OPEN.", "IGN");
-            showToast("Igniter가 NO(OPEN) 상태입니다. 커넥터/배선/단선 여부를 확인하세요. "+safetyLineSuffix(),"warn");
+            addLogLine(t("igniterNoLog"), "IGN");
+            showToast(t("igniterNoToast", {safety:safetyLineSuffix()}),"warn");
           }
         }
 
@@ -1039,55 +1574,63 @@
         else if(prevGsState!==!!gs){
           prevGsState=!!gs;
           if(prevGsState){
-            addLogLine("Igniter Safety Test: ON (from board).", "SAFE");
-            showToast("Igniter Safety Test가 ON입니다. 의도치 않은 인가 위험이 있습니다. "+safetyLineSuffix(),"warn");
+            addLogLine(t("igsOnLog"), "SAFE");
+            showToast(t("igsOnToast", {safety:safetyLineSuffix()}),"warn");
           }else{
-            addLogLine("Igniter Safety Test: OFF (from board).", "SAFE");
-            showToast("Igniter Safety Test가 OFF입니다. 안전 상태로 복귀했습니다. "+safetyLineSuffix(),"info");
+            addLogLine(t("igsOffLog"), "SAFE");
+            showToast(t("igsOffToast", {safety:safetyLineSuffix()}),"info");
           }
         }
 
-        const thrustDisp=convertThrustForDisplay(t);
+        const thrustDisp=convertThrustForDisplay(thrustVal);
         const thrustUnit = (uiSettings && uiSettings.thrustUnit) ? uiSettings.thrustUnit : "kgf";
 
         if(el.thrust)   el.thrust.innerHTML   = `<span class="num">${thrustDisp.toFixed(3)}</span><span class="unit">${thrustUnit}</span>`;
         if(el.pressure) el.pressure.innerHTML = `<span class="num">${p.toFixed(3)}</span><span class="unit">V</span>`;
-        if(el.lt)       el.lt.innerHTML       = `<span class="num">${lt.toFixed(0)}</span><span class="unit">ms</span>`;
+        if(el.lt)       el.lt.innerHTML       = `<span class="num">${lt.toFixed(0)}</span><span class="unit">ms</span><span class="unit">/ ${elapsedMs.toFixed(0)} ms</span>`;
 
         if(el.loopPill) el.loopPill.textContent = lt.toFixed(0) + " ms";
         if(el.snapHz){
-          const snapHz = (lt>0) ? (1000/lt) : 0;
-          el.snapHz.textContent = (snapHz>0 && isFinite(snapHz)) ? (snapHz.toFixed(1) + " Hz") : "-- Hz";
+          const nowUi = Date.now();
+          if((nowUi - lastSnapHzUiMs) >= 1000 || lastSnapHzUiMs === 0){
+            const snapHz = rxHzWindow;
+            el.snapHz.textContent = (snapHz>0 && isFinite(snapHz)) ? (snapHz.toFixed(0) + " Hz") : "-- Hz";
+            lastSnapHzUiMs = nowUi;
+          }
         }
         if(el.hxHz) el.hxHz.textContent = (hxHz>0 && isFinite(hxHz)) ? (hxHz.toFixed(0) + " Hz") : "-- Hz";
         if(el.cpuUs) el.cpuUs.textContent = (ctUs>0 && isFinite(ctUs)) ? (ctUs.toFixed(0) + " us") : "-- us";
 
-        if(el.ignDelayDisplay) el.ignDelayDisplay.textContent = (ignitionAnalysis.delaySec!=null) ? ("Delay "+ignitionAnalysis.delaySec.toFixed(3)+"s") : "Delay --.-s";
-        if(el.burnDurationDisplay) el.burnDurationDisplay.textContent = (ignitionAnalysis.durationSec!=null) ? ("Burn "+ignitionAnalysis.durationSec.toFixed(3)+"s") : "Burn --.-s";
+        if(el.ignDelayDisplay) el.ignDelayDisplay.textContent = (ignitionAnalysis.delaySec!=null)
+          ? (t("labelDelay") + " " + ignitionAnalysis.delaySec.toFixed(3) + "s")
+          : (t("labelDelay") + " --.-s");
+        if(el.burnDurationDisplay) el.burnDurationDisplay.textContent = (ignitionAnalysis.durationSec!=null)
+          ? (t("labelBurn") + " " + ignitionAnalysis.durationSec.toFixed(3) + "s")
+          : (t("labelBurn") + " --.-s");
 
         if(el.modePill){
           let label="-";
-          if(mode===0) label="SERIAL";
-          else if(mode===1) label="WIFI";
-          else if(mode===2) label="AUTO";
+          if(mode===0) label = t("modeSerial");
+          else if(mode===1) label = t("modeWifi");
+          else if(mode===2) label = t("modeAuto");
           el.modePill.textContent=label;
         }
 
         updateRelaySafePill();
 
         if(el.sw){
-          if(sw){ el.sw.textContent="HIGH"; el.sw.className="pill pill-green"; }
-          else { el.sw.textContent="LOW"; el.sw.className="pill pill-gray"; }
+          if(sw){ el.sw.textContent = t("swHigh"); el.sw.className="pill pill-green"; }
+          else { el.sw.textContent = t("swLow"); el.sw.className="pill pill-gray"; }
         }
 
         if(el.ic){
-          if(ic){ el.ic.textContent="OK"; el.ic.className="pill pill-green"; }
-          else { el.ic.textContent="NO"; el.ic.className="pill pill-red"; }
+          if(ic){ el.ic.textContent = t("icOk"); el.ic.className="pill pill-green"; }
+          else { el.ic.textContent = t("icNo"); el.ic.className="pill pill-red"; }
         }
 
         if(el.relay){
-          if(rly){ el.relay.textContent="ON"; el.relay.className="pill pill-green"; }
-          else { el.relay.textContent="OFF"; el.relay.className="pill pill-gray"; }
+          if(rly){ el.relay.textContent = t("relayOn"); el.relay.className="pill pill-green"; }
+          else { el.relay.textContent = t("relayOff"); el.relay.className="pill pill-gray"; }
         }
 
         if(el.igswitch) el.igswitch.checked=!!gs;
@@ -1106,25 +1649,25 @@
 
         if(statusCode!==lastStatusCode){
           if(statusCode===1){
-            addLogLine("Countdown started (st=1).","COUNT");
-            showToast("카운트다운이 시작되었습니다. 주변 안전거리 확보 후 진행하세요. "+safetyLineSuffix(),"warn");
+            addLogLine(t("countdownStartLog"),"COUNT");
+            showToast(t("countdownStartToast", {safety:safetyLineSuffix()}),"warn");
           }else if(statusCode===2){
-            addLogLine("Ignition firing (st=2).","IGNITE");
-            showToast("점화 시퀀스가 진행 중입니다. 절대 접근하지 마세요. "+safetyLineSuffix(),"ignite");
+            addLogLine(t("ignitionFiringLog"),"IGNITE");
+            showToast(t("ignitionFiringToast", {safety:safetyLineSuffix()}),"ignite");
           }else if(statusCode===0 && lastStatusCode===2){
-            addLogLine("Sequence complete. Back to idle.","DONE");
-            showToast("시퀀스가 완료되었습니다. 잔열/잔류가스 주의 후 접근하세요.","success");
+            addLogLine(t("sequenceCompleteLog"),"DONE");
+            showToast(t("sequenceCompleteToast"),"success");
           }else if(statusCode===4){
-            addLogLine("Sequence aborted.","ABORT");
-            showToast("ABORT 처리되었습니다. 재시도 전 결선/스위치/환경을 다시 확인하세요. "+safetyLineSuffix(),"error");
+            addLogLine(t("sequenceAbortedLog"),"ABORT");
+            showToast(t("sequenceAbortedToast", {safety:safetyLineSuffix()}),"error");
           }else if(statusCode===3){
-            showToast("NOT ARMED 상태입니다. 이그나이터 연결 상태를 확인하세요. "+safetyLineSuffix(),"warn");
+            showToast(t("notArmedToast", {safety:safetyLineSuffix()}),"warn");
           }else if(statusCode===9){
             const now = Date.now();
             if(now - lastLockoutToastMs > 5000){
               lastLockoutToastMs = now;
               const name = relayMaskName(lockoutRelayMask);
-              showToast("비정상적인 릴레이 HIGH 감지 ("+name+"). 모든 제어가 정지됩니다. 보드를 재시작하세요.", "error", {duration:12000});
+              showToast(t("lockoutDetectedToastShort", {name}), "error", {duration:12000});
             }
           }
           lastStatusCode=statusCode;
@@ -1153,6 +1696,7 @@
     // =====================
     async function updateData(){
       if(isUpdating) return;
+      if(wsConnected && (Date.now() - wsLastMsgMs) < WS_FRESH_MS) return;
       isUpdating=true;
       try{
         let data;
@@ -1160,7 +1704,7 @@
           data=await fetchJsonWithFallback();
         }catch(err){
           failStreak++;
-          markDisconnectedIfNeeded("No response from board");
+          markDisconnectedIfNeeded(t("noResponse"));
           return;
         }
         onIncomingSample(data, "WIFI");
@@ -1174,8 +1718,8 @@
       const t0 = (performance?.now?.() ?? Date.now());
       try{ await updateData(); }
       catch(e){
-        addLogLine("Polling error: " + (e?.message || e), "ERROR");
-        showToast("폴링 중 오류가 발생했습니다. 로그를 확인하세요.", "error");
+        addLogLine(t("pollingErrorLog", {err:(e?.message || e)}), "ERROR");
+        showToast(t("pollingErrorToast"), "error");
       }
       const t1 = (performance?.now?.() ?? Date.now());
       const dt = t1 - t0;
@@ -1263,7 +1807,7 @@
 
     function resetLongPressVisual(){
       if(longPressSpinnerEl) longPressSpinnerEl.style.setProperty("--lp-angle","0deg");
-      if(confirmTitleEl) confirmTitleEl.textContent="점화 시퀀스를 진행할까요?";
+      if(confirmTitleEl) confirmTitleEl.textContent = t("confirmTitleReady");
     }
     function hideConfirm(){
       if(lpTimer){ clearInterval(lpTimer); lpTimer=null; }
@@ -1274,11 +1818,11 @@
     }
     function showConfirm(){
       if(lockoutLatched){
-        showToast("LOCKOUT 상태에서는 어떤 제어도 불가능합니다. 보드를 재시작하세요.", "error");
+        showToast(t("lockoutNoControl"), "error");
         return;
       }
       if(!isControlUnlocked()){
-        showToast("설비 점검을 먼저 완료하세요. 점검 통과 후 제어 권한이 부여됩니다.", "warn");
+        showToast(t("inspectionRequiredToast"), "warn");
         return;
       }
       if(lpTimer){ clearInterval(lpTimer); lpTimer=null; }
@@ -1287,13 +1831,13 @@
       lpLastSentSec=3;
       if(confirmOverlayEl){ confirmOverlayEl.classList.remove("hidden"); confirmOverlayEl.style.display="flex"; }
       sendCommand({http:"/precount?uw=1&cd=3000", ser:"PRECOUNT 1 3000"}, false);
-      showToast("시퀀스 시작 전 최종 안전 확인을 진행하세요. 3초 롱프레스로 진입합니다. "+safetyLineSuffix(),"warn");
+      showToast(t("preSequenceToast", {safety:safetyLineSuffix()}),"warn");
     }
 
     function startHold(){
       if(lockoutLatched) return;
       if(!isControlUnlocked()){
-        showToast("설비 점검을 먼저 완료하세요. 제어 권한이 필요합니다.", "warn");
+        showToast(t("inspectionRequiredShort"), "warn");
         return;
       }
       if(!el.longPressBtn || !longPressSpinnerEl || lpTimer) return;
@@ -1312,7 +1856,9 @@
 
         let sec=Math.ceil(left/1000); if(sec<0) sec=0;
         if(confirmTitleEl){
-          confirmTitleEl.textContent = sec>0 ? ("점화 시퀀스 진입까지 "+sec+"초") : "카운트다운 시작";
+          confirmTitleEl.textContent = sec>0
+            ? t("confirmTitleEntering", {sec})
+            : t("confirmTitleCountdown");
         }
         if(sec!==lpLastSentSec){
           lpLastSentSec=sec;
@@ -1325,8 +1871,8 @@
           if(confirmOverlayEl){ confirmOverlayEl.classList.add("hidden"); confirmOverlayEl.style.display="none"; }
           sendCommand({http:"/precount?uw=0&cd=0", ser:"PRECOUNT 0 0"}, false);
           sendCommand({http:"/countdown_start", ser:"COUNTDOWN"}, true);
-          addLogLine("Countdown requested from dashboard (long-press).","CMD");
-          showToast("카운트다운 요청을 보드에 전송했습니다. 신호/배선/주변을 계속 확인하세요. "+safetyLineSuffix(),"ignite");
+          addLogLine(t("countdownRequestedLog"),"CMD");
+          showToast(t("countdownRequestedToast", {safety:safetyLineSuffix()}),"ignite");
         }
       },40);
     }
@@ -1339,7 +1885,7 @@
         const cdMs=(uiSettings?uiSettings.countdownSec:10)*1000;
         lpLastSentSec=Math.ceil(cdMs/1000);
         sendCommand({http:"/precount?uw=1&cd="+cdMs, ser:"PRECOUNT 1 "+cdMs}, false);
-        showToast("롱프레스가 취소되었습니다. 주변 안전 확보 후 다시 시도하세요. "+safetyLineSuffix(),"info");
+        showToast(t("longPressCanceledToast", {safety:safetyLineSuffix()}),"info");
       }
     }
 
@@ -1350,37 +1896,40 @@
     function hideSettings(){ if(el.settingsOverlay){ el.settingsOverlay.classList.add("hidden"); el.settingsOverlay.style.display="none"; } }
     function showForceConfirm(){
       if(lockoutLatched){
-        showToast("LOCKOUT 상태에서는 강제점화를 포함한 제어가 불가능합니다. 보드를 재시작하세요.", "error");
+        showToast(t("lockoutForceDenied"), "error");
         return;
       }
       if(currentSt!==0){
-        showToast("시퀀스 진행 중에는 강제 점화를 사용할 수 없습니다.", "warn");
+        showToast(t("forceNotAllowed"), "warn");
         return;
       }
       if(!isControlUnlocked()){
-        showToast("설비 점검을 먼저 완료하세요. 제어 권한이 필요합니다.", "warn");
+        showToast(t("inspectionRequiredShort"), "warn");
         return;
       }
       if(forceOverlayEl){ forceOverlayEl.classList.remove("hidden"); forceOverlayEl.style.display="flex"; }
-      showToast("강제 점화는 고위험 동작입니다. 마지막 확인 후 진행하세요. "+safetyLineSuffix(),"warn");
+      showToast(t("forceWarning", {safety:safetyLineSuffix()}),"warn");
     }
     function hideForceConfirm(){ if(forceOverlayEl){ forceOverlayEl.classList.add("hidden"); forceOverlayEl.style.display="none"; } }
     function showLauncher(){
       if(lockoutLatched){
-        showToast("LOCKOUT 상태에서는 제어가 불가능합니다.", "error");
+        showToast(t("lockoutControlDenied"), "error");
         return;
       }
       if(!isControlUnlocked()){
-        showToast("설비 점검을 먼저 완료하세요. 제어 권한이 필요합니다.", "warn");
+        showToast(t("inspectionRequiredShort"), "warn");
         return;
       }
       if(launcherOverlayEl){ launcherOverlayEl.classList.remove("hidden"); launcherOverlayEl.style.display="flex"; }
     }
     function hideLauncher(){ if(launcherOverlayEl){ launcherOverlayEl.classList.add("hidden"); launcherOverlayEl.style.display="none"; } }
-    function launcherStep(dir){ addLogLine("Launcher "+(dir==="up"?"UP":"DOWN")+" (UI only).","LAUNCHER"); }
+    function launcherStep(dir){
+      const dirLabel = (dir==="up") ? t("dirUp") : t("dirDown");
+      addLogLine(t("launcherUpDownLog", {dir:dirLabel}),"LAUNCHER");
+    }
     function startLauncherHold(dir){
-      if(lockoutLatched){ showToast("LOCKOUT 상태에서는 제어가 불가능합니다.", "error"); return; }
-      if(!isControlUnlocked()){ showToast("설비 점검을 먼저 완료하세요.", "warn"); return; }
+      if(lockoutLatched){ showToast(t("lockoutControlDenied"), "error"); return; }
+      if(!isControlUnlocked()){ showToast(t("inspectionRequiredPlain"), "warn"); return; }
       if(dir==="up"){
         if(!launcherUpHold){ launcherStep("up"); launcherUpHold=setInterval(()=>launcherStep("up"),200); }
       }else{
@@ -1393,10 +1942,9 @@
     }
 
     // =====================
-    // CSV 유틸 (단일 파일 통합)
+    // XLSX 유틸 (멀티 시트)
     // =====================
-    function downloadTextAsFile(text, filename){
-      const blob = new Blob([text], {type:"text/csv"});
+    function downloadBlobAsFile(blob, filename){
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1406,10 +1954,442 @@
       a.remove();
       URL.revokeObjectURL(url);
     }
-    function escapeCsvField(v){
-      const s = (v==null) ? "" : String(v);
-      if(/[",\n\r]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
-      return s;
+    function escapeXmlText(text){
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+    }
+    function toColumnName(index){
+      let n = index + 1;
+      let name = "";
+      while(n > 0){
+        const rem = (n - 1) % 26;
+        name = String.fromCharCode(65 + rem) + name;
+        n = Math.floor((n - 1) / 26);
+      }
+      return name;
+    }
+    function buildSheetXml(rows, drawingRelId, hiddenFromRow){
+      let out = '<?xml version="1.0" encoding="UTF-8"?>';
+      out += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+      if(drawingRelId){
+        out += ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+      }
+      out += ">";
+      out += "<sheetData>";
+      for(let r = 0; r < rows.length; r++){
+        const row = rows[r];
+        const rowNum = r + 1;
+        let rowXml = "";
+        const styleId = (r === 0) ? ' s="1"' : "";
+        for(let c = 0; c < row.length; c++){
+          const value = row[c];
+          if(value === null || value === undefined || value === "") continue;
+          const cellRef = toColumnName(c) + rowNum;
+          if(typeof value === "number" && isFinite(value)){
+            rowXml += '<c r="' + cellRef + '" t="n"' + styleId + '><v>' + value + "</v></c>";
+          }else{
+            const text = String(value);
+            const needsPreserve = /^\s|\s$/.test(text);
+            rowXml += '<c r="' + cellRef + '" t="inlineStr"' + styleId + '><is><t' + (needsPreserve ? ' xml:space="preserve"' : "") + ">";
+            rowXml += escapeXmlText(text);
+            rowXml += "</t></is></c>";
+          }
+        }
+        const hiddenAttr = (hiddenFromRow && rowNum >= hiddenFromRow) ? ' hidden="1"' : "";
+        out += '<row r="' + rowNum + '"' + hiddenAttr + '>' + rowXml + "</row>";
+      }
+      out += "</sheetData>";
+      if(drawingRelId){
+        out += '<drawing r:id="' + drawingRelId + '"/>';
+      }
+      out += "</worksheet>";
+      return out;
+    }
+    function buildWorkbookXml(sheets){
+      let out = '<?xml version="1.0" encoding="UTF-8"?>';
+      out += '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ';
+      out += 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
+      out += "<sheets>";
+      for(let i = 0; i < sheets.length; i++){
+        const name = escapeXmlText(sheets[i].name || "");
+        const hiddenAttr = sheets[i].hidden ? ' state="hidden"' : "";
+        out += '<sheet name="' + name + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"' + hiddenAttr + '/>';
+      }
+      out += "</sheets></workbook>";
+      return out;
+    }
+    function buildWorkbookRelsXml(sheetCount){
+      let out = '<?xml version="1.0" encoding="UTF-8"?>';
+      out += '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
+      for(let i = 0; i < sheetCount; i++){
+        out += '<Relationship Id="rId' + (i + 1) + '" ';
+        out += 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" ';
+        out += 'Target="worksheets/sheet' + (i + 1) + '.xml"/>';
+      }
+      out += '<Relationship Id="rId' + (sheetCount + 1) + '" ';
+      out += 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" ';
+      out += 'Target="styles.xml"/>';
+      out += "</Relationships>";
+      return out;
+    }
+    function buildContentTypesXml(sheetCount, chartCount){
+      let out = '<?xml version="1.0" encoding="UTF-8"?>';
+      out += '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">';
+      out += '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>';
+      out += '<Default Extension="xml" ContentType="application/xml"/>';
+      out += '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>';
+      for(let i = 0; i < sheetCount; i++){
+        out += '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ';
+        out += 'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+      }
+      if(chartCount > 0){
+        out += '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>';
+        for(let i = 1; i <= chartCount; i++){
+          out += '<Override PartName="/xl/charts/chart' + i + '.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>';
+        }
+      }
+      out += '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>';
+      out += "</Types>";
+      return out;
+    }
+    function buildStylesXml(){
+      return '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<fonts count="2">' +
+          '<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' +
+          '<font><b/><sz val="11"/><color rgb="FF1F2937"/><name val="Calibri"/><family val="2"/></font>' +
+        '</fonts>' +
+        '<fills count="2">' +
+          '<fill><patternFill patternType="none"/></fill>' +
+          '<fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/><bgColor indexed="64"/></patternFill></fill>' +
+        '</fills>' +
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+        '<cellXfs count="2">' +
+          '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+          '<xf numFmtId="0" fontId="1" fillId="1" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+        '</cellXfs>' +
+        "</styleSheet>";
+    }
+    function buildSheetRelsXml(){
+      return '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>' +
+        "</Relationships>";
+    }
+    function buildDrawingXml(){
+      const EMU_PER_INCH = 914400;
+      const CHART_W_EMU = Math.round(6 * EMU_PER_INCH);
+      const CHART_H_EMU = Math.round(4.5 * EMU_PER_INCH);
+      const startCol = 5;
+      const secondCol = 15;
+      const startRow = 2;
+      return '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" ' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+        '<xdr:oneCellAnchor>' +
+        '<xdr:from><xdr:col>' + startCol + '</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>' + startRow + '</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>' +
+        '<xdr:ext cx="' + CHART_W_EMU + '" cy="' + CHART_H_EMU + '"/>' +
+        '<xdr:graphicFrame macro="">' +
+        '<xdr:nvGraphicFramePr>' +
+        '<xdr:cNvPr id="2" name="Thrust Chart"/>' +
+        '<xdr:cNvGraphicFramePr/>' +
+        '</xdr:nvGraphicFramePr>' +
+        '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="' + CHART_W_EMU + '" cy="' + CHART_H_EMU + '"/></xdr:xfrm>' +
+        '<a:graphic>' +
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">' +
+        '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/>' +
+        '</a:graphicData>' +
+        '</a:graphic>' +
+        '</xdr:graphicFrame>' +
+        '<xdr:clientData/>' +
+        '</xdr:oneCellAnchor>' +
+        '<xdr:oneCellAnchor>' +
+        '<xdr:from><xdr:col>' + secondCol + '</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>' + startRow + '</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>' +
+        '<xdr:ext cx="' + CHART_W_EMU + '" cy="' + CHART_H_EMU + '"/>' +
+        '<xdr:graphicFrame macro="">' +
+        '<xdr:nvGraphicFramePr>' +
+        '<xdr:cNvPr id="3" name="Pressure Chart"/>' +
+        '<xdr:cNvGraphicFramePr/>' +
+        '</xdr:nvGraphicFramePr>' +
+        '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="' + CHART_W_EMU + '" cy="' + CHART_H_EMU + '"/></xdr:xfrm>' +
+        '<a:graphic>' +
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">' +
+        '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId2"/>' +
+        '</a:graphicData>' +
+        '</a:graphic>' +
+        '</xdr:graphicFrame>' +
+        '<xdr:clientData/>' +
+        '</xdr:oneCellAnchor>' +
+        '</xdr:wsDr>';
+    }
+    function buildDrawingRelsXml(){
+      return '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>' +
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart2.xml"/>' +
+        "</Relationships>";
+    }
+    function buildChartXml(sheetName, startRow, endRow, chartTitle, seriesCol, seriesNameCell, axisYTitle, lineColor, majorUnit, xMajorUnit, xNumFmt, axisXTitle, xMin, xMax, yMin, yMax, xTickSkip, xLabelCol){
+      const xCol = xLabelCol || "A";
+      const xRange = sheetName + "!$" + xCol + "$" + startRow + ":$" + xCol + "$" + endRow;
+      const seriesRange = sheetName + "!$" + seriesCol + "$" + startRow + ":$" + seriesCol + "$" + endRow;
+      const titleText = escapeXmlText(chartTitle || "");
+      const yTitleText = escapeXmlText(axisYTitle || "");
+      const xTitleText = escapeXmlText(axisXTitle || "time");
+      const lineHex = escapeXmlText(lineColor || "3B82F6");
+      const unitVal = (majorUnit && isFinite(majorUnit) && majorUnit > 0) ? Number(majorUnit.toFixed(6)) : null;
+      const xUnitVal = (xMajorUnit && isFinite(xMajorUnit) && xMajorUnit > 0) ? Number(xMajorUnit.toFixed(6)) : null;
+      const xMinVal = (xMin != null && isFinite(xMin)) ? Number(xMin.toFixed(6)) : null;
+      const xMaxVal = (xMax != null && isFinite(xMax)) ? Number(xMax.toFixed(6)) : null;
+      const yMinVal = (yMin != null && isFinite(yMin)) ? Number(yMin.toFixed(6)) : null;
+      const yMaxVal = (yMax != null && isFinite(yMax)) ? Number(yMax.toFixed(6)) : null;
+      const xFmt = escapeXmlText(xNumFmt || "0.0");
+      const axisBase = 120000 + (seriesCol.charCodeAt(0) - 64) * 10;
+      const xAxisId = axisBase + 1;
+      const yAxisId = axisBase + 2;
+      const axisTitleXml = (text)=>{
+        if(!text) return "";
+        return '<c:title>' +
+          '<c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r>' +
+          '<a:rPr sz="1100"><a:solidFill><a:srgbClr val="404040"/></a:solidFill></a:rPr>' +
+          '<a:t>' + text + '</a:t>' +
+          '</a:r></a:p></c:rich></c:tx>' +
+          '<c:overlay val="0"/>' +
+          '</c:title>';
+      };
+      const chartTitleXml = (text)=>{
+        if(!text) return "";
+        return '<c:title>' +
+          '<c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r>' +
+          '<a:rPr sz="1400"><a:solidFill><a:srgbClr val="202020"/></a:solidFill></a:rPr>' +
+          '<a:t>' + text + '</a:t>' +
+          '</a:r></a:p></c:rich></c:tx>' +
+          '<c:overlay val="0"/>' +
+          '</c:title>';
+      };
+      const plotAreaLayout =
+        '<c:layout><c:manualLayout>' +
+        '<c:layoutTarget val="outer"/>' +
+        '<c:xMode val="edge"/><c:yMode val="edge"/>' +
+        '<c:x val="0.06"/><c:y val="0.20"/><c:w val="0.88"/><c:h val="0.70"/>' +
+        '</c:manualLayout></c:layout>';
+      return '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+        '<c:chart>' +
+        chartTitleXml(titleText) +
+        '<c:autoTitleDeleted val="0"/>' +
+        '<c:plotArea>' +
+        plotAreaLayout +
+        '<c:areaChart>' +
+        '<c:grouping val="standard"/>' +
+        '<c:dLbls><c:delete val="1"/></c:dLbls>' +
+        '<c:ser>' +
+        '<c:idx val="0"/><c:order val="0"/>' +
+        '<c:tx><c:strRef><c:f>' + seriesNameCell + '</c:f></c:strRef></c:tx>' +
+        '<c:cat><c:numRef><c:f>' + xRange + '</c:f></c:numRef></c:cat>' +
+        '<c:val><c:numRef><c:f>' + seriesRange + '</c:f></c:numRef></c:val>' +
+        '<c:spPr>' +
+        '<a:gradFill rotWithShape="1">' +
+        '<a:gsLst>' +
+        '<a:gs pos="0"><a:srgbClr val="' + lineHex + '"><a:alpha val="32000"/></a:srgbClr></a:gs>' +
+        '<a:gs pos="100000"><a:srgbClr val="' + lineHex + '"><a:alpha val="0"/></a:srgbClr></a:gs>' +
+        '</a:gsLst>' +
+        '<a:lin ang="5400000" scaled="1"/>' +
+        '</a:gradFill>' +
+        '<a:ln><a:noFill/></a:ln>' +
+        '</c:spPr>' +
+        '</c:ser>' +
+        '<c:axId val="' + xAxisId + '"/><c:axId val="' + yAxisId + '"/>' +
+        '</c:areaChart>' +
+        '<c:lineChart>' +
+        '<c:grouping val="standard"/>' +
+        '<c:dLbls><c:delete val="1"/></c:dLbls>' +
+        '<c:ser>' +
+        '<c:idx val="1"/><c:order val="1"/>' +
+        '<c:tx><c:strRef><c:f>' + seriesNameCell + '</c:f></c:strRef></c:tx>' +
+        '<c:cat><c:numRef><c:f>' + xRange + '</c:f></c:numRef></c:cat>' +
+        '<c:val><c:numRef><c:f>' + seriesRange + '</c:f></c:numRef></c:val>' +
+        '<c:marker><c:symbol val="none"/></c:marker>' +
+        '<c:spPr><a:ln w="19000"><a:solidFill><a:srgbClr val="' + lineHex + '"/></a:solidFill></a:ln></c:spPr>' +
+        '</c:ser>' +
+        '<c:axId val="' + xAxisId + '"/><c:axId val="' + yAxisId + '"/>' +
+        '</c:lineChart>' +
+        '<c:catAx>' +
+        '<c:axId val="' + xAxisId + '"/>' +
+        '<c:delete val="0"/>' +
+        '<c:scaling><c:orientation val="minMax"/></c:scaling>' +
+        '<c:axPos val="b"/>' +
+        '<c:majorGridlines><c:spPr><a:ln w="12700"><a:solidFill><a:srgbClr val="D0D0D0"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>' +
+        '<c:numFmt formatCode="' + xFmt + '" sourceLinked="0"/>' +
+        (xTickSkip && xTickSkip > 1 ? ('<c:tickLblSkip val="' + xTickSkip + '"/><c:tickMarkSkip val="' + xTickSkip + '"/>') : '') +
+        '<c:majorTickMark val="out"/>' +
+        '<c:minorTickMark val="none"/>' +
+        '<c:tickLblPos val="nextTo"/>' +
+        axisTitleXml(xTitleText) +
+        '<c:crossAx val="' + yAxisId + '"/>' +
+        '<c:crosses val="autoZero"/>' +
+        '</c:catAx>' +
+        '<c:valAx>' +
+        '<c:axId val="' + yAxisId + '"/>' +
+        '<c:delete val="0"/>' +
+        '<c:scaling><c:orientation val="minMax"/>' +
+        (yMinVal != null ? ('<c:min val="' + yMinVal + '"/>') : '') +
+        (yMaxVal != null ? ('<c:max val="' + yMaxVal + '"/>') : '') +
+        '</c:scaling>' +
+        '<c:axPos val="l"/>' +
+        '<c:majorGridlines><c:spPr><a:ln w="12700"><a:solidFill><a:srgbClr val="D0D0D0"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>' +
+        '<c:numFmt formatCode="General" sourceLinked="1"/>' +
+        (unitVal ? ('<c:majorUnit val="' + unitVal + '"/>') : '') +
+        '<c:majorTickMark val="out"/>' +
+        '<c:minorTickMark val="none"/>' +
+        '<c:tickLblPos val="nextTo"/>' +
+        axisTitleXml(yTitleText) +
+        '<c:crossAx val="' + xAxisId + '"/>' +
+        '<c:crosses val="autoZero"/>' +
+        '</c:valAx>' +
+        '</c:plotArea>' +
+        '<c:plotVisOnly val="1"/>' +
+        '<c:dispBlanksAs val="gap"/>' +
+        '</c:chart>' +
+        '</c:chartSpace>';
+    }
+    const CRC32_TABLE = (()=>{
+      const table = new Uint32Array(256);
+      for(let i = 0; i < 256; i++){
+        let c = i;
+        for(let k = 0; k < 8; k++){
+          c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        table[i] = c >>> 0;
+      }
+      return table;
+    })();
+    function crc32(buf){
+      let crc = 0 ^ -1;
+      for(let i = 0; i < buf.length; i++){
+        crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ buf[i]) & 0xff];
+      }
+      return (crc ^ -1) >>> 0;
+    }
+    function buildZip(files){
+      const encoder = new TextEncoder();
+      const fileEntries = [];
+      let localSize = 0;
+
+      for(const file of files){
+        const nameBytes = encoder.encode(file.name);
+        const dataBytes = encoder.encode(file.data);
+        const crc = crc32(dataBytes);
+        const localHeader = new Uint8Array(30 + nameBytes.length);
+        const view = new DataView(localHeader.buffer);
+        view.setUint32(0, 0x04034b50, true);
+        view.setUint16(4, 20, true);
+        view.setUint16(6, 0, true);
+        view.setUint16(8, 0, true);
+        view.setUint16(10, 0, true);
+        view.setUint16(12, 0, true);
+        view.setUint32(14, crc, true);
+        view.setUint32(18, dataBytes.length, true);
+        view.setUint32(22, dataBytes.length, true);
+        view.setUint16(26, nameBytes.length, true);
+        view.setUint16(28, 0, true);
+        localHeader.set(nameBytes, 30);
+
+        fileEntries.push({
+          nameBytes,
+          dataBytes,
+          crc,
+          localHeader,
+          offset: localSize
+        });
+
+        localSize += localHeader.length + dataBytes.length;
+      }
+
+      let centralSize = 0;
+      const centralParts = [];
+      for(const entry of fileEntries){
+        const centralHeader = new Uint8Array(46 + entry.nameBytes.length);
+        const view = new DataView(centralHeader.buffer);
+        view.setUint32(0, 0x02014b50, true);
+        view.setUint16(4, 20, true);
+        view.setUint16(6, 20, true);
+        view.setUint16(8, 0, true);
+        view.setUint16(10, 0, true);
+        view.setUint16(12, 0, true);
+        view.setUint16(14, 0, true);
+        view.setUint32(16, entry.crc, true);
+        view.setUint32(20, entry.dataBytes.length, true);
+        view.setUint32(24, entry.dataBytes.length, true);
+        view.setUint16(28, entry.nameBytes.length, true);
+        view.setUint16(30, 0, true);
+        view.setUint16(32, 0, true);
+        view.setUint16(34, 0, true);
+        view.setUint16(36, 0, true);
+        view.setUint32(38, 0, true);
+        view.setUint32(42, entry.offset, true);
+        centralHeader.set(entry.nameBytes, 46);
+        centralParts.push(centralHeader);
+        centralSize += centralHeader.length;
+      }
+
+      const end = new Uint8Array(22);
+      const endView = new DataView(end.buffer);
+      endView.setUint32(0, 0x06054b50, true);
+      endView.setUint16(4, 0, true);
+      endView.setUint16(6, 0, true);
+      endView.setUint16(8, fileEntries.length, true);
+      endView.setUint16(10, fileEntries.length, true);
+      endView.setUint32(12, centralSize, true);
+      endView.setUint32(16, localSize, true);
+      endView.setUint16(20, 0, true);
+
+      const totalSize = localSize + centralSize + end.length;
+      const out = new Uint8Array(totalSize);
+      let offset = 0;
+      for(const entry of fileEntries){
+        out.set(entry.localHeader, offset);
+        offset += entry.localHeader.length;
+        out.set(entry.dataBytes, offset);
+        offset += entry.dataBytes.length;
+      }
+      for(const central of centralParts){
+        out.set(central, offset);
+        offset += central.length;
+      }
+      out.set(end, offset);
+      return out;
+    }
+    function buildXlsxBlob(sheets, chart){
+      const chartCount = chart ? 2 : 0;
+      const files = [];
+      files.push({name:"[Content_Types].xml", data:buildContentTypesXml(sheets.length, chartCount)});
+      files.push({name:"_rels/.rels", data:'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'});
+      files.push({name:"xl/workbook.xml", data:buildWorkbookXml(sheets)});
+      files.push({name:"xl/_rels/workbook.xml.rels", data:buildWorkbookRelsXml(sheets.length)});
+      files.push({name:"xl/styles.xml", data:buildStylesXml()});
+      for(let i = 0; i < sheets.length; i++){
+        const drawingRelId = (chartCount > 0 && i === 0) ? "rId1" : null;
+        const hiddenStart = (chartCount > 0 && i === 0 && chart && chart.hideDataFromRow) ? chart.hideDataFromRow : null;
+        files.push({name:"xl/worksheets/sheet" + (i + 1) + ".xml", data:buildSheetXml(sheets[i].rows, drawingRelId, hiddenStart)});
+      }
+      if(chartCount > 0){
+        files.push({name:"xl/worksheets/_rels/sheet1.xml.rels", data:buildSheetRelsXml()});
+        files.push({name:"xl/drawings/drawing1.xml", data:buildDrawingXml()});
+        files.push({name:"xl/drawings/_rels/drawing1.xml.rels", data:buildDrawingRelsXml()});
+        files.push({name:"xl/charts/chart1.xml", data:buildChartXml(chart.sheetName, chart.startRow, chart.endRow, chart.titleThrust, "B", chart.seriesNameThrust, chart.axisTitleThrust, "EF4444", chart.majorUnitThrust, chart.xMajorUnit, chart.xNumFmt, chart.axisTitleX, chart.xMin, chart.xMax, chart.yMinThrust, chart.yMaxThrust, chart.xTickSkip, chart.xLabelCol)});
+        files.push({name:"xl/charts/chart2.xml", data:buildChartXml(chart.sheetName, chart.startRow, chart.endRow, chart.titlePressure, "C", chart.seriesNamePressure, chart.axisTitlePressure, "3B82F6", chart.majorUnitPressure, chart.xMajorUnit, chart.xNumFmt, chart.axisTitleX, chart.xMin, chart.xMax, chart.yMinPressure, chart.yMaxPressure, chart.xTickSkip, chart.xLabelCol)});
+      }
+      const zipData = buildZip(files);
+      return new Blob([zipData], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
     }
 
     // =====================
@@ -1418,7 +2398,7 @@
     async function sendCommand(cmd, logIt){
       if(lockoutLatched){
         const name = relayMaskName(lockoutRelayMask);
-        showToast("LOCKOUT("+name+") 상태에서는 명령을 보낼 수 없습니다. 보드를 재시작하세요.", "error");
+        showToast(t("lockoutCmdDenied", {name}), "error");
         return;
       }
 
@@ -1469,7 +2449,7 @@
       }
 
       if(logIt){
-        addLogLine("CMD => " + (cmd.http || cmd.ser || "?"), "CMD");
+        addLogLine(t("cmdSentLog", {cmd:(cmd.http || cmd.ser || "?")}), "CMD");
       }
     }
 
@@ -1530,6 +2510,7 @@
       el.serialTxToggle = document.getElementById("serialTxToggle");
       el.serialStatus = document.getElementById("serialStatus");
       el.serialStatusText = document.getElementById("serialStatusText");
+      el.langSelect = document.getElementById("langSelect");
 
       el.launcherOpenBtn = document.getElementById("launcherOpenBtn");
       el.inspectionOpenBtn = document.getElementById("inspectionOpenBtn");
@@ -1553,8 +2534,8 @@
 
       loadSettings();
       applySettingsToUI();
-      addLogLine("System ready. Waiting for commands.","READY");
-      showToast("대시보드가 시작되었습니다. 연결 상태 확인 후 운용하세요. "+safetyLineSuffix(),"info");
+      addLogLine(t("systemReadyLog"),"READY");
+      showToast(t("dashboardStartToast", {safety:safetyLineSuffix()}),"info");
       setLockoutVisual(false);
       resetInspectionUI();
       setButtonsFromState(currentSt, lockoutLatched);
@@ -1578,7 +2559,7 @@
           saveSettings();
           updateRelaySafePill();
           sendCommand({http:"/set?rs="+(relaySafeEnabled?1:0), ser:"RS "+(relaySafeEnabled?1:0)}, true);
-          showToast(relaySafeEnabled ? "RelaySafe가 ON입니다. 비정상 릴레이 HIGH 감지 시 LOCKOUT 됩니다." : "RelaySafe가 OFF입니다. (권장하지 않음)", relaySafeEnabled?"info":"warn");
+          showToast(relaySafeEnabled ? t("relaySafeOnToast") : t("relaySafeOffToast"), relaySafeEnabled?"info":"warn");
         });
       }
 
@@ -1588,9 +2569,9 @@
           uiSettings.igs = val;
           saveSettings();
           sendCommand({http:"/set?igs="+val, ser:"IGS "+val}, true);
-          addLogLine("Igniter Safety Test toggled: "+(val?"ON":"OFF"),"SAFE");
-          showToast(val ? ("Igniter Safety Test가 ON입니다. 이그나이터/배선에 주의하세요. "+safetyLineSuffix())
-                       : ("Igniter Safety Test가 OFF입니다. 안전 상태로 유지하세요. "+safetyLineSuffix()),
+          addLogLine(t("igsToggledLog", {state:(val?"ON":"OFF")}),"SAFE");
+          showToast(val ? t("igsToggledOnToast", {safety:safetyLineSuffix()})
+                       : t("igsToggledOffToast", {safety:safetyLineSuffix()}),
                    val ? "warn" : "info");
         });
       }
@@ -1614,7 +2595,7 @@
           serialRxEnabled = !!el.serialRxToggle.checked;
           uiSettings.serialRx = serialRxEnabled;
           saveSettings();
-          showToast(serialRxEnabled ? "시리얼 수신 파싱 ON" : "시리얼 수신 파싱 OFF", "info");
+          showToast(serialRxEnabled ? t("serialRxOnToast") : t("serialRxOffToast"), "info");
         });
       }
       if(el.serialTxToggle){
@@ -1622,7 +2603,14 @@
           serialTxEnabled = !!el.serialTxToggle.checked;
           uiSettings.serialTx = serialTxEnabled;
           saveSettings();
-          showToast(serialTxEnabled ? "시리얼 명령 전송 ON" : "시리얼 명령 전송 OFF", "info");
+          showToast(serialTxEnabled ? t("serialTxOnToast") : t("serialTxOffToast"), "info");
+        });
+      }
+      if(el.langSelect){
+        el.langSelect.addEventListener("change",()=>{
+          uiSettings.lang = (el.langSelect.value === "en") ? "en" : "ko";
+          saveSettings();
+          setLanguage(uiSettings.lang);
         });
       }
 
@@ -1636,11 +2624,11 @@
         el.abortBtn.addEventListener("click",()=>{
           if(lockoutLatched){
             const name = relayMaskName(lockoutRelayMask);
-            showToast("LOCKOUT("+name+") 상태에서는 ABORT도 불가능합니다. 보드를 재시작하세요.", "error");
+          showToast(t("lockoutAbortDenied", {name}), "error");
             return;
           }
           sendCommand({http:"/abort", ser:"ABORT"}, true);
-          showToast("ABORT 요청을 보드에 전송했습니다. 안전 확인 후 재시도하세요. "+safetyLineSuffix(),"error");
+          showToast(t("abortRequestedToast", {safety:safetyLineSuffix()}),"error");
           hideConfirm();
         });
       }
@@ -1656,7 +2644,7 @@
       if(el.inspectionOpenBtn){
         const openInspection=()=>{
           if(!connOk){
-            showToast("보드와 연결 후 설비 점검을 실행하세요.", "warn");
+            showToast(t("inspectionOpenToast"), "warn");
             return;
           }
           showInspection();
@@ -1682,12 +2670,12 @@
         forceCancel.addEventListener("click",()=>hideForceConfirm());
         forceYes.addEventListener("click",()=>{
           if(!isControlUnlocked()){
-            showToast("설비 점검을 먼저 완료하세요. 제어 권한이 필요합니다.", "warn");
+            showToast(t("inspectionRequiredShort"), "warn");
             return;
           }
           hideForceConfirm();
           sendCommand({http:"/force_ignite", ser:"FORCE"}, true);
-          showToast("강제 점화 요청을 보드에 전송했습니다. 절대 접근하지 마세요. "+safetyLineSuffix(),"ignite");
+          showToast(t("forceRequestedToast", {safety:safetyLineSuffix()}),"ignite");
         });
       }
 
@@ -1705,8 +2693,8 @@
       if(lockoutCopyBtn){
         lockoutCopyBtn.addEventListener("click", ()=>{
           const name = relayMaskName(lockoutRelayMask);
-          addLogLine("LOCKOUT modal acknowledged ("+name+"). Restart required.", "SAFE");
-          showToast("LOCKOUT("+name+") 확인 처리(로그 기록). 보드를 재시작하세요.", "error", {duration:7000});
+          addLogLine(t("lockoutAckLog", {name}), "SAFE");
+          showToast(t("lockoutAckToast", {name}), "error", {duration:7000});
         });
       }
 
@@ -1715,11 +2703,11 @@
           const text=logLines.join("\n");
           if(navigator.clipboard && window.isSecureContext){
             navigator.clipboard.writeText(text).then(()=>{
-              addLogLine("Log copied to clipboard.","INFO");
-              showToast("로그가 클립보드에 복사되었습니다.","success");
+              addLogLine(t("logCopiedLog"),"INFO");
+              showToast(t("logCopiedToast"),"success");
             }).catch(()=>{
-              addLogLine("Clipboard copy failed.","ERROR");
-              showToast("클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.","error");
+              addLogLine(t("clipboardCopyFailedLog"),"ERROR");
+              showToast(t("clipboardCopyFailedToast"),"error");
             });
           }else{
             try{
@@ -1729,11 +2717,11 @@
               ta.focus(); ta.select();
               document.execCommand("copy");
               document.body.removeChild(ta);
-              addLogLine("Log copied to clipboard.","INFO");
-              showToast("로그가 클립보드에 복사되었습니다.","success");
+              addLogLine(t("logCopiedLog"),"INFO");
+              showToast(t("logCopiedToast"),"success");
             }catch(e){
-              addLogLine("Copy failed: "+e,"ERROR");
-              showToast("복사에 실패했습니다. 브라우저 정책을 확인하세요.","error");
+              addLogLine(t("copyFailedLog", {err:e}),"ERROR");
+              showToast(t("copyFailedToast"),"error");
             }
           }
         });
@@ -1746,7 +2734,7 @@
           const fnameSuffix =
             now.getFullYear().toString()+
             pad(now.getMonth()+1)+pad(now.getDate())+"_"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds());
-          const filename = "ALTIS_FLASH_DAQ_" + fnameSuffix + "_data.csv";
+          const filename = "ALTIS_FLASH_DAQ_" + fnameSuffix + "_data.xlsx";
 
           const hasIgnitionWindow =
             ignitionAnalysis.hasData &&
@@ -1760,71 +2748,84 @@
           const delayVal = (ignitionAnalysis.delaySec!=null) ? ignitionAnalysis.delaySec.toFixed(3) : "";
           const durVal   = (ignitionAnalysis.durationSec!=null) ? ignitionAnalysis.durationSec.toFixed(3) : "";
 
-          let csv = "";
-          csv += [
-            "type",
-            "time_iso",
-            "tag",
-            "message",
-            "thrust_kgf",
-            "pressure_v",
-            "loop_ms",
-            "hx_hz",
-            "cpu_us",
-            "switch",
-            "ign_ok",
-            "relay",
-            "igs_mode",
-            "state",
-            "cd_ms",
-            "rel_time_s",
-            "is_ignition_window",
-            "ignition_delay_s",
-            "effective_burn_s",
-            "threshold_kgf"
-          ].join(",") + "\n";
+          const summaryRows = [
+            [t("hdrTimeIso"), t("hdrMessage"), t("hdrIgnWindow"), t("hdrIgnDelay"), t("hdrBurn"), t("hdrThreshold")],
+            [
+              now.toISOString(),
+              hasIgnitionWindow ? t("ignWindowDetected") : t("ignWindowNone"),
+              hasIgnitionWindow ? 1 : 0,
+              delayVal !== "" ? Number(delayVal) : "",
+              durVal !== "" ? Number(durVal) : "",
+              Number(IGN_THRUST_THRESHOLD.toFixed(3))
+            ],
+            [],
+            [t("hdrElapsedMs"), t("hdrThrust"), t("hdrPressure"), "time_axis"]
+          ];
 
-          csv += [
-            "IGN_SUMMARY",
-            escapeCsvField(now.toISOString()),
-            "",
-            escapeCsvField(hasIgnitionWindow ? "Ignition window detected" : "No ignition window"),
-            "", "", "", "", "", "", "", "", "", "", "",
-            "",
-            hasIgnitionWindow ? "1" : "0",
-            delayVal,
-            durVal,
-            IGN_THRUST_THRESHOLD.toFixed(3)
-          ].join(",") + "\n";
-
+          const eventRows = [[t("hdrTimeIso"), t("hdrTag"), t("hdrMessage")]];
           for(const e of eventLog){
-            csv += [
-              "EVENT",
-              escapeCsvField(e.time),
-              escapeCsvField(e.tag || ""),
-              escapeCsvField(e.message || ""),
-              "", "", "", "", "", "", "", "", "", "", "",
-              "",
-              "0",
-              "", "", ""
-            ].join(",") + "\n";
+            eventRows.push([e.time || "", e.tag || "", e.message || ""]);
           }
 
-          const t0ms = (logData && logData.length) ? Date.parse(logData[0].time) : null;
+          const rawRows = [[
+            t("hdrTimeIso"), t("hdrThrust"), t("hdrPressure"), t("hdrLoopMs"), t("hdrElapsedMs"), t("hdrHxHz"), t("hdrCpuUs"), t("hdrSwitch"), t("hdrIgnOk"), t("hdrRelay"),
+            t("hdrIgs"), t("hdrState"), t("hdrCdMs"), t("hdrRelTime"), t("hdrIgnWindowFlag")
+          ]];
 
+          let thrustMin = Infinity;
+          let thrustMax = -Infinity;
+          let pressureMin = Infinity;
+          let pressureMax = -Infinity;
+          let baseElapsedSec = null;
+          let xMaxSec = null;
+          let xDeltaSum = 0;
+          let xDeltaCount = 0;
+          let lastXVal = null;
+
+          const t0ms = (logData && logData.length) ? Date.parse(logData[0].time) : null;
           for(const row of logData){
             const ms = Date.parse(row.time);
-            const rel = (t0ms!=null && isFinite(ms)) ? ((ms - t0ms)/1000).toFixed(3) : "";
+            const rel = (t0ms!=null && isFinite(ms)) ? ((ms - t0ms)/1000) : "";
             const inWin = (hasIgnitionWindow && isFinite(ms) && ms>=windowStartMs && ms<=windowEndMs) ? 1 : 0;
-
-            csv += [
-              "RAW",
-              escapeCsvField(row.time),
-              "",
-              "",
-              Number(row.t).toFixed(3),
-              Number(row.p).toFixed(3),
+            const tVal = Number(row.t);
+            const pVal = Number(row.p);
+            if(inWin){
+              if(isFinite(tVal)){ if(tVal < thrustMin) thrustMin = tVal; if(tVal > thrustMax) thrustMax = tVal; }
+              if(isFinite(pVal)){ if(pVal < pressureMin) pressureMin = pVal; if(pVal > pressureMax) pressureMax = pVal; }
+              const elapsedSec = (row.elapsed != null && isFinite(Number(row.elapsed))) ? (Number(row.elapsed) / 1000) : null;
+              let xVal = "";
+              if(elapsedSec != null && isFinite(elapsedSec)){
+                if(baseElapsedSec == null) baseElapsedSec = elapsedSec;
+                xVal = elapsedSec - baseElapsedSec;
+                if(isFinite(xVal)){
+                  if(lastXVal != null){
+                    const d = xVal - lastXVal;
+                    if(isFinite(d) && d > 0){
+                      xDeltaSum += d;
+                      xDeltaCount += 1;
+                    }
+                  }
+                  lastXVal = xVal;
+                  if(xMaxSec == null || xVal > xMaxSec) xMaxSec = xVal;
+                }else{
+                  xVal = "";
+                }
+              }
+              const xNum = (xVal !== "" ? Number(xVal.toFixed(3)) : "");
+              const xLabel = (xNum !== "" && isFinite(xNum)) ? Number(xNum.toFixed(1)) : "";
+              summaryRows.push([
+                xNum,
+                isFinite(tVal) ? Number(tVal.toFixed(3)) : "",
+                isFinite(pVal) ? Number(pVal.toFixed(3)) : "",
+                xLabel
+              ]);
+            }
+            rawRows.push([
+              row.time || "",
+              isFinite(tVal) ? Number(tVal.toFixed(3)) : "",
+              isFinite(pVal) ? Number(pVal.toFixed(3)) : "",
               (row.lt ?? ""),
+              (row.elapsed != null && isFinite(Number(row.elapsed)) ? Number(Number(row.elapsed).toFixed(0)) : ""),
               (row.hz ?? ""),
               (row.ct ?? ""),
               (row.s  ?? 0),
@@ -1833,16 +2834,85 @@
               (row.gs ?? 0),
               (row.st ?? 0),
               (row.cd ?? 0),
-              rel,
-              String(inWin),
-              "", "", ""
-            ].join(",") + "\n";
+              (rel !== "" ? Number(rel.toFixed(3)) : ""),
+              inWin
+            ]);
           }
 
-          downloadTextAsFile(csv, filename);
+          if(summaryRows.length === 4){
+            summaryRows.push(["","",""]);
+          }
 
-          addLogLine("CSV exported (single file): " + filename, "INFO");
-          showToast("CSV를 1개 파일로 내보냈습니다. (IGN_SUMMARY + EVENT + RAW)", "success");
+          const calcNiceUnit = (min, max, targetTicks)=>{
+            if(!isFinite(min) || !isFinite(max)) return null;
+            const range = max - min;
+            if(!(range > 0)) return null;
+            const rough = range / targetTicks;
+            const pow10 = Math.pow(10, Math.floor(Math.log10(rough)));
+            const n = rough / pow10;
+            let step;
+            if(n <= 1) step = 1;
+            else if(n <= 2) step = 2;
+            else if(n <= 5) step = 5;
+            else step = 10;
+            return step * pow10;
+          };
+          const axisMinMax = (min, max, step)=>{
+            if(!isFinite(min) || !isFinite(max) || !isFinite(step) || !(step > 0)) return {min:null, max:null};
+            const low = (min >= 0) ? 0 : Math.floor(min / step) * step;
+            const high = Math.ceil(max / step) * step;
+            return {min:low, max:high};
+          };
+
+          const thrustMajorUnit = calcNiceUnit(thrustMin, thrustMax, 6);
+          const pressureMajorUnit = calcNiceUnit(pressureMin, pressureMax, 6);
+          const thrustAxis = axisMinMax(thrustMin, thrustMax, thrustMajorUnit || 1);
+          const pressureAxis = axisMinMax(pressureMin, pressureMax, pressureMajorUnit || 1);
+          const xMajorUnit = 0.5;
+          const avgDelta = (xDeltaCount > 0) ? (xDeltaSum / xDeltaCount) : null;
+          const xTickSkip = (avgDelta && isFinite(avgDelta) && avgDelta > 0)
+            ? Math.max(1, Math.round(xMajorUnit / avgDelta))
+            : 1;
+          const xMax = (xMaxSec != null && isFinite(xMaxSec)) ? Math.max(xMajorUnit, Math.ceil(xMaxSec / xMajorUnit) * xMajorUnit) : null;
+
+          const chartStartRow = 5;
+          const chartEndRow = summaryRows.length;
+          const chartConfig = (chartEndRow >= chartStartRow)
+            ? {
+                sheetName:"IGN_SUMMARY",
+                startRow:chartStartRow,
+                endRow:chartEndRow,
+                titleThrust:t("chartTitleThrust"),
+                titlePressure:t("chartTitlePressure"),
+                seriesNameThrust:"IGN_SUMMARY!$B$4",
+                seriesNamePressure:"IGN_SUMMARY!$C$4",
+                axisTitleThrust:t("hdrThrust"),
+                axisTitlePressure:t("hdrPressure"),
+                axisTitleX:"time",
+                majorUnitThrust:thrustMajorUnit,
+                majorUnitPressure:pressureMajorUnit,
+                xMajorUnit:xMajorUnit,
+                xNumFmt:"0.0",
+                xTickSkip:xTickSkip,
+                xMin:(xMax != null ? 0 : null),
+                xMax:xMax,
+                yMinThrust:thrustAxis.min,
+                yMaxThrust:thrustAxis.max,
+                yMinPressure:pressureAxis.min,
+                yMaxPressure:pressureAxis.max,
+                xLabelCol:"D"
+              }
+            : null;
+
+          const workbook = buildXlsxBlob([
+            {name:"IGN_SUMMARY", rows:summaryRows},
+            {name:"EVENT", rows:eventRows},
+            {name:"RAW", rows:rawRows}
+          ], chartConfig);
+          downloadBlobAsFile(workbook, filename);
+
+          addLogLine(t("xlsxExportLog", {filename}), "INFO");
+          showToast(t("xlsxExportToast"), "success");
         });
       }
 
@@ -1896,16 +2966,16 @@
           await sendCommand({http:"/set?cd_ms="+(cdSec*1000),  ser:"CDMS "+(cdSec*1000)}, false);
 
           if(before.thrustUnit!==uiSettings.thrustUnit){
-            showToast("추력 단위가 "+before.thrustUnit+" → "+uiSettings.thrustUnit+" 로 변경되었습니다. 표시 단위만 변경됩니다. "+safetyLineSuffix(),"info");
+            showToast(t("thrustUnitChangedToast", {from:before.thrustUnit, to:uiSettings.thrustUnit, safety:safetyLineSuffix()}),"info");
           }
           if(before.ignDurationSec!==uiSettings.ignDurationSec){
-            showToast("점화 시간이 "+before.ignDurationSec+"s → "+uiSettings.ignDurationSec+"s 로 변경되었습니다. 과열/인가 시간에 주의하세요. "+safetyLineSuffix(),"warn");
+            showToast(t("ignTimeChangedToast", {from:before.ignDurationSec, to:uiSettings.ignDurationSec, safety:safetyLineSuffix()}),"warn");
           }
           if(before.countdownSec!==uiSettings.countdownSec){
-            showToast("카운트다운 시간이 "+before.countdownSec+"s → "+uiSettings.countdownSec+"s 로 변경되었습니다. 인원 통제 시간을 충분히 두세요. "+safetyLineSuffix(),"warn");
+            showToast(t("countdownChangedToast", {from:before.countdownSec, to:uiSettings.countdownSec, safety:safetyLineSuffix()}),"warn");
           }
 
-          addLogLine("Settings updated: thrustUnit="+uiSettings.thrustUnit+", ignDuration="+ignSec+"s, countdown="+cdSec+"s", "CFG");
+          addLogLine(t("settingsUpdatedLog", {unit:uiSettings.thrustUnit, ign:ignSec, cd:cdSec}), "CFG");
           hideSettings();
           redrawCharts();
 
@@ -1974,6 +3044,8 @@
       attachTouch("pressureChart");
       window.addEventListener("resize",()=>{ redrawCharts(); });
 
+      openWebSocket();
+      setInterval(ensureWsAlive, 500);
       updateData().finally(()=>{ pollLoop(); });
       updateSerialPill();
 
